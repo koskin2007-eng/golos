@@ -1,7 +1,7 @@
 # Project structure
 
 ```text
-Golos / VoiceInput
+Голос
 ├─ AGENTS.md
 ├─ README.md
 ├─ config.yaml

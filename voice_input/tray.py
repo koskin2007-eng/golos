@@ -40,14 +40,14 @@ class TrayController:
             return image
 
         menu = pystray.Menu(
-            pystray.MenuItem(lambda _item: f"Status: {self.status_getter()}", None, enabled=False),
-            pystray.MenuItem("Open settings", lambda _icon, _item: self._open_path(self.config_path)),
-            pystray.MenuItem("Open log", lambda _icon, _item: self._open_path(self.log_path)),
-            pystray.MenuItem("Collect diagnostics", self._collect_diagnostics, enabled=self.diagnostics_collector is not None),
+            pystray.MenuItem(lambda _item: f"Статус: {self.status_getter()}", None, enabled=False),
+            pystray.MenuItem("Открыть настройки", lambda _icon, _item: self._open_path(self.config_path)),
+            pystray.MenuItem("Открыть лог", lambda _icon, _item: self._open_path(self.log_path)),
+            pystray.MenuItem("Собрать диагностику", self._collect_diagnostics, enabled=self.diagnostics_collector is not None),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Exit", self._exit),
+            pystray.MenuItem("Выход", self._exit),
         )
-        self._icon = pystray.Icon("voice_input", create_image(), "Voice Input", menu)
+        self._icon = pystray.Icon("voice_input", create_image(), "Голос", menu)
         self._icon.run()
 
     def notify(self, title: str, message: str) -> None:
@@ -86,10 +86,10 @@ class TrayController:
         def worker() -> None:
             try:
                 archive_path = self.diagnostics_collector()
-                self.notify("Voice Input", f"Diagnostics saved: {archive_path.name}")
+                self.notify("Голос", f"Диагностика сохранена: {archive_path.name}")
                 os.startfile(str(archive_path.parent))  # noqa: S606 - Windows desktop helper.
             except Exception as exc:  # noqa: BLE001
-                self.notify("Voice Input error", f"Could not collect diagnostics: {exc}")
+                self.notify("Голос: ошибка", f"Не удалось собрать диагностику: {exc}")
 
         threading.Thread(target=worker, name="collect-diagnostics", daemon=True).start()
 

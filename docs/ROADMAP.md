@@ -1,4 +1,4 @@
-# VoiceInput roadmap
+# Голос roadmap
 
 ## Current interface
 
@@ -33,9 +33,9 @@ Visual direction:
 
 Recommended path: GitHub Releases as the update source.
 
-1. Build `VoiceInput` on the developer machine or in GitHub Actions.
+1. Build the app on the developer machine or in GitHub Actions.
 2. Publish a release with:
-   - `VoiceInput-win64.zip`;
+   - `Golos-win64.zip`;
    - `latest.json`;
    - SHA256 checksum.
 3. Installed apps check `latest.json` on a schedule or from a menu command.
@@ -47,7 +47,7 @@ This keeps updates centralized without needing a custom server.
 
 Implemented first:
 
-- tray command `Collect diagnostics`;
+- tray command `Собрать диагностику`;
 - CLI command `--collect-diagnostics`;
 - zip output in `diagnostics/`;
 - includes logs, sanitized `config.yaml`, and runtime metadata;

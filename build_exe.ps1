@@ -21,7 +21,7 @@ $ConfigPath = Join-Path $ProjectRoot "config.yaml"
     --noconfirm `
     --clean `
     --noconsole `
-    --name VoiceInput `
+    --name Golos `
     --distpath dist `
     --workpath build `
     --specpath build `
@@ -33,4 +33,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Done. EXE folder: $ProjectRoot\dist\VoiceInput"
+Write-Host "Done. EXE folder: $ProjectRoot\dist\Golos"

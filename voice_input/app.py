@@ -42,7 +42,7 @@ class VoiceInputApp:
         self._stop_event = threading.Event()
         self._recording = False
         self._processing = False
-        self._status = "starting"
+        self._status = "запуск"
 
     def run(self, no_tray: bool = False) -> None:
         self._load_dotenv()
@@ -72,7 +72,7 @@ class VoiceInputApp:
             logger=self.logger,
         )
 
-        self.set_status("ready")
+        self.set_status("готов")
         self.hotkey.start()
         if self.config.performance.preload_model:
             self._preload_local_backend()
@@ -92,7 +92,7 @@ class VoiceInputApp:
         self._stop_event.set()
         if self.hotkey is not None:
             self.hotkey.stop()
-        self.set_status("stopped")
+        self.set_status("остановлено")
         self.logger.info("Application stopped")
 
     def get_status(self) -> str:
@@ -152,16 +152,16 @@ class VoiceInputApp:
             self._recording = True
 
         try:
-            self.set_status("recording")
+            self.set_status("запись")
             self._beep(900)
             self.recorder.start()
             self.logger.info("Recording started")
         except Exception as exc:  # noqa: BLE001
             with self._state_lock:
                 self._recording = False
-            self.set_status("recording error")
+            self.set_status("ошибка записи")
             self.logger.exception("Recording start failed")
-            self._notify("Voice Input error", str(exc))
+            self._notify("Голос: ошибка", str(exc))
 
     def _on_hotkey_released(self) -> None:
         with self._state_lock:
@@ -183,9 +183,9 @@ class VoiceInputApp:
         except Exception as exc:  # noqa: BLE001
             with self._state_lock:
                 self._processing = False
-            self.set_status("recording error")
+            self.set_status("ошибка записи")
             self.logger.exception("Recording stop failed")
-            self._notify("Voice Input error", str(exc))
+            self._notify("Голос: ошибка", str(exc))
             return
 
         threading.Thread(
@@ -200,7 +200,7 @@ class VoiceInputApp:
         transcribe_ms = 0.0
         backend_used = self.config.backend
         try:
-            self.set_status("transcribing")
+            self.set_status("распознавание")
             transcriber = self._get_transcriber_for_current_config()
             result = transcriber.transcribe(recording.wav_path)
             backend_used = result.backend
@@ -214,10 +214,10 @@ class VoiceInputApp:
                     transcribe_ms,
                     backend_used,
                 )
-                self.set_status("ready")
+                self.set_status("готов")
                 return
 
-            self.set_status("pasting")
+            self.set_status("вставка")
             paste_ms = self.paster.paste(text)
             total_ms = (time.perf_counter() - release_started) * 1000.0
             self.logger.info(
@@ -229,11 +229,11 @@ class VoiceInputApp:
                 backend_used,
                 len(text),
             )
-            self.set_status("ready")
+            self.set_status("готов")
         except Exception as exc:  # noqa: BLE001
-            self.set_status("error")
+            self.set_status("ошибка")
             self.logger.exception("Transcribe or paste failed")
-            self._notify("Voice Input error", str(exc))
+            self._notify("Голос: ошибка", str(exc))
         finally:
             with self._state_lock:
                 self._processing = False
@@ -242,7 +242,7 @@ class VoiceInputApp:
         backend = self.config.backend
         if backend == "openai" and not OpenAITranscriber.has_api_key():
             self.logger.error("OPENAI_API_KEY is not set; falling back to local_fast")
-            self._notify("Voice Input", "OPENAI_API_KEY not found. Using local_fast.")
+            self._notify("Голос", "OPENAI_API_KEY не найден. Использую local_fast.")
             backend = "local_fast"
         return self._get_transcriber(backend)
 
@@ -289,7 +289,7 @@ class VoiceInputApp:
             pass
 
     def _run_console_loop(self) -> None:
-        print(f"Voice Input is running. Hold {self.config.hotkey} to dictate. Press Ctrl+C to exit.")
+        print(f"Голос запущен. Удерживайте {self.config.hotkey}, чтобы диктовать. Ctrl+C - выход.")
         try:
             while not self._stop_event.wait(0.5):
                 pass
@@ -298,17 +298,18 @@ class VoiceInputApp:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Windows push-to-talk Russian voice input.")
-    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
-    parser.add_argument("--no-tray", action="store_true", help="Run without system tray icon.")
-    parser.add_argument("--smoke-test", action="store_true", help="Load config and logger without starting hotkeys.")
-    parser.add_argument("--list-devices", action="store_true", help="Print audio devices visible to sounddevice.")
-    parser.add_argument("--record-test", type=float, default=0.0, help="Record a short WAV for N seconds and exit.")
-    parser.add_argument("--transcribe-test", default="", help="Transcribe an existing WAV using the configured backend.")
-    parser.add_argument("--paste-test", default="", help="Paste the provided text through clipboard + Ctrl+V and exit.")
-    parser.add_argument("--list-profiles", action="store_true", help="List recognition profiles from config.yaml.")
-    parser.add_argument("--set-profile", default="", help="Set recognition_profile in config.yaml and exit.")
-    parser.add_argument("--collect-diagnostics", action="store_true", help="Create a diagnostics zip and exit.")
+    parser = argparse.ArgumentParser(description="Голосовой ввод для Windows с режимом push-to-talk.", add_help=False)
+    parser.add_argument("-h", "--help", action="help", help="Показать справку и выйти.")
+    parser.add_argument("--config", default="config.yaml", help="Путь к config.yaml.")
+    parser.add_argument("--no-tray", action="store_true", help="Запустить без иконки в трее.")
+    parser.add_argument("--smoke-test", action="store_true", help="Проверить конфиг и логгер без hotkey.")
+    parser.add_argument("--list-devices", action="store_true", help="Показать микрофоны, видимые sounddevice.")
+    parser.add_argument("--record-test", type=float, default=0.0, help="Записать короткий WAV N секунд и выйти.")
+    parser.add_argument("--transcribe-test", default="", help="Распознать существующий WAV текущим backend.")
+    parser.add_argument("--paste-test", default="", help="Вставить переданный текст через буфер и Ctrl+V.")
+    parser.add_argument("--list-profiles", action="store_true", help="Показать профили распознавания из config.yaml.")
+    parser.add_argument("--set-profile", default="", help="Выбрать recognition_profile в config.yaml и выйти.")
+    parser.add_argument("--collect-diagnostics", action="store_true", help="Создать zip диагностики и выйти.")
     return parser
 
 
@@ -375,8 +376,8 @@ def main(argv: list[str] | None = None) -> int:
 
         guard = SingleInstanceGuard()
         if not guard.acquire():
-            logger.info("Another VoiceInput instance is already running; exiting")
-            print("Voice Input is already running.")
+            logger.info("Another Golos instance is already running; exiting")
+            print("Голос уже запущен.")
             return 0
 
         try:
