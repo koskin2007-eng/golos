@@ -1,0 +1,71 @@
+hotkey: "F8"
+language: "ru"
+backend: "local_fast"
+recognition_profile: "base"
+
+profiles:
+  tiny:
+    backend: "local_fast"
+    local_fast:
+      model_size: "tiny"
+      device: "cpu"
+      compute_type: "int8"
+      beam_size: 1
+      vad_filter: true
+  base:
+    backend: "local_fast"
+    local_fast:
+      model_size: "base"
+      device: "cpu"
+      compute_type: "int8"
+      beam_size: 1
+      vad_filter: true
+  small:
+    backend: "local_fast"
+    local_fast:
+      model_size: "small"
+      device: "cpu"
+      compute_type: "int8"
+      beam_size: 1
+      vad_filter: true
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  device: null
+
+local_fast:
+  model_size: "base"
+  device: "cpu"
+  compute_type: "int8"
+  beam_size: 1
+  vad_filter: true
+
+local_quality:
+  model_size: "medium"
+  device: "auto"
+  compute_type: "auto"
+  beam_size: 3
+  vad_filter: true
+
+openai:
+  model: "gpt-4o-mini-transcribe"
+  response_format: "text"
+
+paste:
+  method: "clipboard_ctrl_v"
+  restore_clipboard: false
+  restore_delay_ms: 800
+  add_space_after_text: true
+
+feedback:
+  beep_on_recording: true
+
+startup:
+  run_on_windows_startup: false
+
+logs:
+  level: "INFO"
+
+performance:
+  preload_model: false
