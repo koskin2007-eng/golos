@@ -6,12 +6,12 @@ The current UI is intentionally small:
 
 - system tray icon;
 - status in the tray menu;
-- open `config.yaml`;
+- open user settings window;
 - open `logs/app.log`;
 - collect diagnostics;
 - exit.
 
-There is no full settings window yet.
+The first settings window exists and covers common user settings. It should grow gradually instead of exposing raw YAML to normal users.
 
 ## Next UI step
 

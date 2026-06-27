@@ -85,7 +85,7 @@ class FasterWhisperTranscriber:
         started = time.perf_counter()
         segments, _info = model.transcribe(
             str(wav_path),
-            language=self.language,
+            language=None if self.language == "auto" else self.language,
             beam_size=self.settings.beam_size,
             vad_filter=self.settings.vad_filter,
             condition_on_previous_text=False,

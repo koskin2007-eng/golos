@@ -21,6 +21,7 @@ from voice_input.paste import TextPaster
 from voice_input.paths import resolve_runtime_path
 from voice_input.recorder import AudioRecorder, RecordingResult
 from voice_input.single_instance import SingleInstanceGuard
+from voice_input.settings_window import open_settings_window
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
@@ -63,6 +64,7 @@ class VoiceInputApp:
                 status_getter=self.get_status,
                 on_exit=self.shutdown,
                 diagnostics_collector=self.collect_diagnostics,
+                settings_opener=self.open_settings,
             )
 
         self.hotkey = PushToTalkHotkey(
@@ -278,6 +280,21 @@ class VoiceInputApp:
         self.logger.info("Diagnostics collected path=%s", archive_path)
         return archive_path
 
+    def open_settings(self) -> None:
+        import subprocess
+        import sys
+
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--settings", "--config", str(self.config_manager.path)]
+        else:
+            command = [sys.executable, "-m", "voice_input.app", "--settings", "--config", str(self.config_manager.path)]
+
+        subprocess.Popen(
+            command,
+            cwd=str(Path.cwd()),
+            close_fds=True,
+        )
+
     def _beep(self, frequency: int) -> None:
         if not self.config.feedback.beep_on_recording:
             return
@@ -310,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-profiles", action="store_true", help="Показать профили распознавания из config.yaml.")
     parser.add_argument("--set-profile", default="", help="Выбрать recognition_profile в config.yaml и выйти.")
     parser.add_argument("--collect-diagnostics", action="store_true", help="Создать zip диагностики и выйти.")
+    parser.add_argument("--settings", action="store_true", help="Открыть окно настроек и выйти.")
     return parser
 
 
@@ -330,6 +348,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.set_profile:
             config_manager.set_profile(args.set_profile)
             print(f"recognition_profile set to: {args.set_profile}")
+            return 0
+
+        if args.settings:
+            open_settings_window(args.config)
             return 0
 
         config = config_manager.load()

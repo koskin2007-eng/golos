@@ -22,6 +22,7 @@
    ├─ paths.py
    ├─ recorder.py
    ├─ single_instance.py
+   ├─ settings_window.py
    ├─ tray.py
    ├─ utils.py
    └─ transcribers/
@@ -58,6 +59,7 @@ These folders are local runtime output and are not committed:
 - `voice_input/hotkey.py` - global push-to-talk key handling.
 - `voice_input/paste.py` - text paste through clipboard and keyboard shortcuts.
 - `voice_input/tray.py` - system tray UI.
+- `voice_input/settings_window.py` - user-facing settings window.
 - `voice_input/diagnostics.py` - safe diagnostic zip collection.
 - `voice_input/single_instance.py` - Windows mutex to prevent duplicate app instances.
 - `voice_input/logger.py` - rotating file and console logs.

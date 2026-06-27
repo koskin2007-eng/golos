@@ -43,12 +43,14 @@ class OpenAITranscriber:
         client = self._get_client()
         started = time.perf_counter()
         with Path(wav_path).open("rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                model=self.settings.model,
-                file=audio_file,
-                language=self.language,
-                response_format=self.settings.response_format,
-            )
+            params = {
+                "model": self.settings.model,
+                "file": audio_file,
+                "response_format": self.settings.response_format,
+            }
+            if self.language != "auto":
+                params["language"] = self.language
+            response = client.audio.transcriptions.create(**params)
 
         if isinstance(response, str):
             text = response
@@ -62,4 +64,3 @@ class OpenAITranscriber:
             backend="openai",
             model=self.settings.model,
         )
-
