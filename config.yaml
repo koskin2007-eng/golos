@@ -54,6 +54,10 @@ openai:
   model: "gpt-4o-mini-transcribe"
   response_format: "text"
 
+text_correction:
+  enabled: false
+  model: "gpt-5.4-mini"
+
 paste:
   method: "clipboard_ctrl_v"
   restore_clipboard: false

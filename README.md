@@ -155,6 +155,11 @@ recognition_profile: "tiny"
 .\.venv\Scripts\python.exe -m voice_input.app --set-profile base
 ```
 
+Есть два OpenAI-режима:
+
+- `Профиль: openai` - OpenAI сам распознаёт аудио.
+- `GPT исправляет ошибки после распознавания` - локальная модель распознаёт аудио, а GPT исправляет текст перед вставкой.
+
 Если нужно точнее:
 
 ```yaml

@@ -41,10 +41,11 @@ class OpenAITranscriber:
 
     def transcribe(self, wav_path: str | Path) -> TranscriptionResult:
         client = self._get_client()
+        model = os.getenv("OPENAI_TRANSCRIBE_MODEL") or self.settings.model
         started = time.perf_counter()
         with Path(wav_path).open("rb") as audio_file:
             params = {
-                "model": self.settings.model,
+                "model": model,
                 "file": audio_file,
                 "response_format": self.settings.response_format,
             }
@@ -62,5 +63,5 @@ class OpenAITranscriber:
             text=text,
             elapsed_ms=elapsed_ms,
             backend="openai",
-            model=self.settings.model,
+            model=model,
         )

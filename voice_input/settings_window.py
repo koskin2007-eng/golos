@@ -49,6 +49,9 @@ class SettingsWindow:
         self.profile_var = tk.StringVar(value=str(self.config.get("recognition_profile") or "base"))
         self.language_var = tk.StringVar(value=self._label_for_language(str(self.config.get("language") or "ru")))
         self.openai_model_var = tk.StringVar(value=str((self.config.get("openai") or {}).get("model") or "gpt-4o-mini-transcribe"))
+        text_correction = self.config.get("text_correction") or {}
+        self.text_correction_enabled_var = tk.BooleanVar(value=bool(text_correction.get("enabled", False)))
+        self.text_correction_model_var = tk.StringVar(value=str(text_correction.get("model") or "gpt-5.4-mini"))
         self.beep_var = tk.BooleanVar(value=bool((self.config.get("feedback") or {}).get("beep_on_recording", True)))
         self.autostart_var = tk.BooleanVar(value=bool((self.config.get("startup") or {}).get("run_on_windows_startup", False)))
         self.status_var = tk.StringVar(value="Настройки загружены")
@@ -162,17 +165,19 @@ class SettingsWindow:
         profiles = sorted(str(name) for name in (self.config.get("profiles") or {}))
         ttk.Label(panel, text="Распознавание", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         self._field(panel, 1, "Профиль", ttk.Combobox(panel, textvariable=self.profile_var, values=profiles, state="readonly", width=22))
-        self._field(panel, 2, "OpenAI модель", ttk.Entry(panel, textvariable=self.openai_model_var, width=32))
+        self._field(panel, 2, "Модель распознавания GPT", ttk.Entry(panel, textvariable=self.openai_model_var, width=32))
+        ttk.Checkbutton(panel, text="GPT исправляет ошибки после распознавания", variable=self.text_correction_enabled_var).grid(row=3, column=1, sticky="w", pady=8)
+        self._field(panel, 4, "Модель исправления", ttk.Entry(panel, textvariable=self.text_correction_model_var, width=32))
 
         info = tk.Label(
             panel,
-            text="Профиль base работает локально. Профиль openai использует OPENAI_API_KEY из .env.",
+            text="Профиль base работает локально. Профиль openai отправляет аудио в OpenAI. Галочка исправления отправляет уже распознанный текст в GPT.",
             bg=COLORS["panel"],
             fg=COLORS["muted"],
             justify="left",
             wraplength=560,
         )
-        info.grid(row=3, column=1, sticky="w", pady=(10, 0))
+        info.grid(row=5, column=1, sticky="w", pady=(10, 0))
         panel.columnconfigure(1, weight=1)
 
     def _build_diagnostics_tab(self, parent: ttk.Frame) -> None:
@@ -203,6 +208,7 @@ class SettingsWindow:
         profile = self.profile_var.get().strip()
         language = LANGUAGE_OPTIONS.get(self.language_var.get(), "ru")
         openai_model = self.openai_model_var.get().strip()
+        text_correction_model = self.text_correction_model_var.get().strip()
 
         if not hotkey:
             messagebox.showerror("Голос", "Укажите горячую клавишу.")
@@ -214,7 +220,10 @@ class SettingsWindow:
             messagebox.showerror("Голос", "Такого профиля нет в config.yaml.")
             return
         if not openai_model:
-            messagebox.showerror("Голос", "Укажите OpenAI модель.")
+            messagebox.showerror("Голос", "Укажите модель распознавания GPT.")
+            return
+        if self.text_correction_enabled_var.get() and not text_correction_model:
+            messagebox.showerror("Голос", "Укажите модель исправления.")
             return
 
         raw = self.config_manager._read_yaml_mapping()
@@ -222,6 +231,8 @@ class SettingsWindow:
         raw["language"] = language
         raw["recognition_profile"] = profile
         raw.setdefault("openai", {})["model"] = openai_model
+        raw.setdefault("text_correction", {})["enabled"] = bool(self.text_correction_enabled_var.get())
+        raw.setdefault("text_correction", {})["model"] = text_correction_model
         raw.setdefault("feedback", {})["beep_on_recording"] = bool(self.beep_var.get())
 
         self.config_manager._write_yaml_mapping(raw)

@@ -69,6 +69,10 @@ openai:
   model: "gpt-4o-mini-transcribe"
   response_format: "text"
 
+text_correction:
+  enabled: false
+  model: "gpt-5.4-mini"
+
 paste:
   method: "clipboard_ctrl_v"
   restore_clipboard: false
@@ -152,6 +156,10 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
         "model": "gpt-4o-mini-transcribe",
         "response_format": "text",
     },
+    "text_correction": {
+        "enabled": False,
+        "model": "gpt-5.4-mini",
+    },
     "paste": {
         "method": "clipboard_ctrl_v",
         "restore_clipboard": False,
@@ -196,6 +204,12 @@ class OpenAISettings:
 
 
 @dataclass(slots=True)
+class TextCorrectionSettings:
+    enabled: bool = False
+    model: str = "gpt-5.4-mini"
+
+
+@dataclass(slots=True)
 class PasteSettings:
     method: str = "clipboard_ctrl_v"
     restore_clipboard: bool = False
@@ -234,6 +248,7 @@ class AppConfig:
     local_fast: LocalWhisperSettings
     local_quality: LocalWhisperSettings
     openai: OpenAISettings
+    text_correction: TextCorrectionSettings
     paste: PasteSettings
     feedback: FeedbackSettings
     startup: StartupSettings
@@ -283,6 +298,7 @@ def build_config(data: dict[str, Any]) -> AppConfig:
         local_fast=LocalWhisperSettings(**data["local_fast"]),
         local_quality=LocalWhisperSettings(**data["local_quality"]),
         openai=OpenAISettings(**data["openai"]),
+        text_correction=TextCorrectionSettings(**data["text_correction"]),
         paste=PasteSettings(**data["paste"]),
         feedback=FeedbackSettings(**data["feedback"]),
         startup=StartupSettings(**data["startup"]),

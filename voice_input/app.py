@@ -22,10 +22,20 @@ from voice_input.paths import resolve_runtime_path
 from voice_input.recorder import AudioRecorder, RecordingResult
 from voice_input.single_instance import SingleInstanceGuard
 from voice_input.settings_window import open_settings_window
+from voice_input.text_corrector import OpenAITextCorrector
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
 from voice_input.utils import clean_transcript
+
+
+def load_dotenv_file() -> None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        return
 
 
 class VoiceInputApp:
@@ -39,6 +49,7 @@ class VoiceInputApp:
         self.hotkey: PushToTalkHotkey | None = None
         self.tray: TrayController | None = None
         self._transcribers: dict[tuple[str, str, str, str], object] = {}
+        self._text_corrector: OpenAITextCorrector | None = None
         self._state_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._recording = False
@@ -108,12 +119,7 @@ class VoiceInputApp:
             self.tray.update_menu()
 
     def _load_dotenv(self) -> None:
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv()
-        except ImportError:
-            return
+        load_dotenv_file()
 
     def _log_backend_settings(self) -> None:
         backend = self.config.backend
@@ -200,6 +206,7 @@ class VoiceInputApp:
     def _process_recording(self, recording: RecordingResult, release_started: float) -> None:
         paste_ms = 0.0
         transcribe_ms = 0.0
+        correction_ms = 0.0
         backend_used = self.config.backend
         try:
             self.set_status("распознавание")
@@ -219,13 +226,16 @@ class VoiceInputApp:
                 self.set_status("готов")
                 return
 
+            text, correction_ms = self._correct_text_if_needed(text)
+
             self.set_status("вставка")
             paste_ms = self.paster.paste(text)
             total_ms = (time.perf_counter() - release_started) * 1000.0
             self.logger.info(
-                "record_seconds=%.2f transcribe_ms=%.0f paste_ms=%.0f total_ms=%.0f backend=%s text_len=%s",
+                "record_seconds=%.2f transcribe_ms=%.0f correction_ms=%.0f paste_ms=%.0f total_ms=%.0f backend=%s text_len=%s",
                 recording.duration_seconds,
                 transcribe_ms,
+                correction_ms,
                 paste_ms,
                 total_ms,
                 backend_used,
@@ -247,6 +257,30 @@ class VoiceInputApp:
             self._notify("Голос", "OPENAI_API_KEY не найден. Использую local_fast.")
             backend = "local_fast"
         return self._get_transcriber(backend)
+
+    def _correct_text_if_needed(self, text: str) -> tuple[str, float]:
+        if not self.config.text_correction.enabled:
+            return text, 0.0
+        if not OpenAITextCorrector.has_api_key():
+            self.logger.error("OPENAI_API_KEY is not set; text correction skipped")
+            self._notify("Голос", "OPENAI_API_KEY не найден. Исправление текста пропущено.")
+            return text, 0.0
+
+        try:
+            self.set_status("исправление")
+            corrector = self._get_text_corrector()
+            result = corrector.correct(text)
+            self.logger.info("Text correction done correction_ms=%.0f model=%s text_len=%s", result.elapsed_ms, result.model, len(result.text))
+            return clean_transcript(result.text), result.elapsed_ms
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Text correction failed; using original transcription")
+            self._notify("Голос: ошибка", f"Не удалось исправить текст через GPT: {exc}")
+            return text, 0.0
+
+    def _get_text_corrector(self) -> OpenAITextCorrector:
+        if self._text_corrector is None:
+            self._text_corrector = OpenAITextCorrector(self.config.text_correction, self.config.language, self.logger)
+        return self._text_corrector
 
     def _get_transcriber(self, backend: str):  # noqa: ANN202
         if backend == "local_fast":
@@ -336,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        load_dotenv_file()
         config_manager = ConfigManager(args.config)
 
         if args.list_profiles:
