@@ -22,6 +22,13 @@ Add a small Windows settings window with four tabs:
 - Diagnostics: open log, collect diagnostics zip, copy version info.
 - Updates: current version, update channel, check for update, install update.
 
+Visual direction:
+
+- warmer green and yellow palette;
+- joyful but still readable Windows utility;
+- dark text on light surfaces;
+- blue only as a small secondary/system accent.
+
 ## Update strategy
 
 Recommended path: GitHub Releases as the update source.

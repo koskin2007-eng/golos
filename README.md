@@ -30,7 +30,7 @@
 
 ## 3. Как запустить
 
-Основной запуск:
+Основной запуск во время разработки и тестирования:
 
 ```powershell
 .\run.ps1
@@ -53,6 +53,8 @@
 ```powershell
 .\.venv\Scripts\python.exe -m voice_input.app --smoke-test
 ```
+
+EXE во время активной доработки не пересобираем. Сборка нужна только перед передачей программы другому человеку или перед GitHub Release.
 
 ## 4. Как выбрать микрофон
 
@@ -102,6 +104,7 @@ recognition_profile: "base"
 - `tiny` - самый быстрый, но хуже русский текст.
 - `base` - текущий рабочий баланс скорости и качества.
 - `small` - точнее в некоторых фразах, но на этом ПК заметно медленнее.
+- `openai` - отправляет аудио в OpenAI API и обычно лучше справляется со сложной диктовкой, если задан `OPENAI_API_KEY`.
 
 Переключить профиль командой:
 
@@ -138,6 +141,18 @@ recognition_profile: "small"
 recognition_profile: "tiny"
 ```
 
+Если локальное распознавание даёт много ошибок, можно попробовать OpenAI-профиль:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --set-profile openai
+```
+
+Для возврата на локальный режим:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --set-profile base
+```
+
 Если нужно точнее:
 
 ```yaml
@@ -165,7 +180,7 @@ OPENAI_API_KEY=
 Затем в `config.yaml`:
 
 ```yaml
-backend: "openai"
+recognition_profile: "openai"
 
 openai:
   model: "gpt-4o-mini-transcribe"
@@ -183,6 +198,8 @@ openai:
 
 ## 8. Как собрать EXE
 
+Во время активной разработки этот шаг обычно пропускаем.
+
 ```powershell
 .\build_exe.ps1
 ```
@@ -194,6 +211,14 @@ dist/VoiceInput/
 ```
 
 Сборка использует PyInstaller. Папки `dist/` и `build/` исключены из Git.
+
+## Структура проекта
+
+Подробная структура лежит в:
+
+```text
+docs/PROJECT_STRUCTURE.md
+```
 
 ## 9. Как добавить автозапуск Windows
 

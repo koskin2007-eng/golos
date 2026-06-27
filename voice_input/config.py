@@ -43,6 +43,8 @@ profiles:
       compute_type: "int8"
       beam_size: 1
       vad_filter: true
+  openai:
+    backend: "openai"
 
 audio:
   sample_rate: 16000
@@ -122,6 +124,9 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
                 "beam_size": 1,
                 "vad_filter": True,
             },
+        },
+        "openai": {
+            "backend": "openai",
         },
     },
     "audio": {
