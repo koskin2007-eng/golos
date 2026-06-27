@@ -33,6 +33,23 @@ LANGUAGE_OPTIONS = {
 }
 
 
+PROFILE_HELP_TEXT = {
+    "base": "База: локальное распознавание на этом компьютере. Базовые настройки, нормальный баланс скорости и качества. OpenAI для аудио не используется.",
+    "small": "Смолл: локальное распознавание на этом компьютере. Медленнее базы, но обычно качественнее распознаёт русский текст.",
+    "tiny": "Тини: локальное распознавание на этом компьютере. Самый быстрый вариант, но качество распознавания заметно хуже.",
+    "openai": "OpenAI: распознавание через интернет с помощью GPT-модели. Обычно лучше для сложной диктовки, но требует ключ OpenAI и интернет.",
+}
+
+PROFILE_LABELS = {
+    "base": "База - локально, базовые настройки",
+    "small": "Смолл - локально, медленнее, качественнее",
+    "tiny": "Тини - локально, быстро, качество хуже",
+    "openai": "OpenAI - через интернет, с помощью GPT",
+}
+
+PROFILE_ORDER = ("base", "small", "tiny", "openai")
+
+
 class SettingsWindow:
     def __init__(self, config_path: str | Path = "config.yaml") -> None:
         self.config_manager = ConfigManager(config_path)
@@ -46,7 +63,7 @@ class SettingsWindow:
         self.root.configure(bg=COLORS["bg"])
 
         self.hotkey_var = tk.StringVar(value=str(self.config.get("hotkey") or "F8"))
-        self.profile_var = tk.StringVar(value=str(self.config.get("recognition_profile") or "base"))
+        self.profile_var = tk.StringVar(value=self._profile_label(str(self.config.get("recognition_profile") or "base")))
         self.language_var = tk.StringVar(value=self._label_for_language(str(self.config.get("language") or "ru")))
         self.openai_model_var = tk.StringVar(value=str((self.config.get("openai") or {}).get("model") or "gpt-4o-mini-transcribe"))
         text_correction = self.config.get("text_correction") or {}
@@ -55,6 +72,7 @@ class SettingsWindow:
         self.beep_var = tk.BooleanVar(value=bool((self.config.get("feedback") or {}).get("beep_on_recording", True)))
         self.autostart_var = tk.BooleanVar(value=bool((self.config.get("startup") or {}).get("run_on_windows_startup", False)))
         self.status_var = tk.StringVar(value="Настройки загружены")
+        self.profile_info_var = tk.StringVar()
 
         self._configure_styles()
         self._build()
@@ -162,16 +180,28 @@ class SettingsWindow:
 
     def _build_recognition_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
-        profiles = sorted(str(name) for name in (self.config.get("profiles") or {}))
+        profile_ids = [str(name) for name in (self.config.get("profiles") or {})]
+        profiles = [self._profile_label(name) for name in self._ordered_profile_ids(profile_ids)]
         ttk.Label(panel, text="Распознавание", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        self._field(panel, 1, "Профиль", ttk.Combobox(panel, textvariable=self.profile_var, values=profiles, state="readonly", width=22))
-        self._field(panel, 2, "Модель распознавания GPT", ttk.Entry(panel, textvariable=self.openai_model_var, width=32))
-        ttk.Checkbutton(panel, text="GPT исправляет ошибки после распознавания", variable=self.text_correction_enabled_var).grid(row=3, column=1, sticky="w", pady=8)
-        self._field(panel, 4, "Модель исправления", ttk.Entry(panel, textvariable=self.text_correction_model_var, width=32))
+        profile_combo = ttk.Combobox(panel, textvariable=self.profile_var, values=profiles, state="readonly", width=46)
+        self._field(panel, 1, "Профиль", profile_combo)
+
+        self.openai_model_entry = ttk.Entry(panel, textvariable=self.openai_model_var, width=32)
+        self.openai_model_label = self._field(panel, 2, "Модель распознавания OpenAI", self.openai_model_entry)
+
+        self.text_correction_check = ttk.Checkbutton(
+            panel,
+            text="GPT исправляет ошибки после распознавания",
+            variable=self.text_correction_enabled_var,
+            command=self._refresh_recognition_profile_ui,
+        )
+        self.text_correction_check.grid(row=3, column=1, sticky="w", pady=8)
+        self.text_correction_model_entry = ttk.Entry(panel, textvariable=self.text_correction_model_var, width=32)
+        self._field(panel, 4, "Модель исправления", self.text_correction_model_entry)
 
         info = tk.Label(
             panel,
-            text="Профиль base работает локально. Профиль openai отправляет аудио в OpenAI. Галочка исправления отправляет уже распознанный текст в GPT.",
+            textvariable=self.profile_info_var,
             bg=COLORS["panel"],
             fg=COLORS["muted"],
             justify="left",
@@ -179,6 +209,8 @@ class SettingsWindow:
         )
         info.grid(row=5, column=1, sticky="w", pady=(10, 0))
         panel.columnconfigure(1, weight=1)
+        profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_recognition_profile_ui())
+        self._refresh_recognition_profile_ui()
 
     def _build_diagnostics_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
@@ -199,13 +231,33 @@ class SettingsWindow:
         ).pack(anchor="w")
         ttk.Button(panel, text="Открыть GitHub", command=self._open_github).pack(anchor="w", pady=(14, 0))
 
-    def _field(self, parent: ttk.Frame, row: int, label: str, widget: tk.Widget) -> None:
-        ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 18), pady=8)
+    def _field(self, parent: ttk.Frame, row: int, label: str, widget: tk.Widget) -> ttk.Label:
+        label_widget = ttk.Label(parent, text=label, style="Panel.TLabel")
+        label_widget.grid(row=row, column=0, sticky="w", padx=(0, 18), pady=8)
         widget.grid(row=row, column=1, sticky="w", pady=8)
+        return label_widget
+
+    def _refresh_recognition_profile_ui(self) -> None:
+        profile = self._profile_id_from_label(self.profile_var.get())
+        is_openai_profile = profile == "openai"
+        correction_enabled = bool(self.text_correction_enabled_var.get())
+
+        if hasattr(self, "openai_model_label"):
+            label = "Модель распознавания OpenAI" if is_openai_profile else "Модель OpenAI (не используется)"
+            self.openai_model_label.configure(text=label)
+        if hasattr(self, "openai_model_entry"):
+            self.openai_model_entry.state(["!disabled"] if is_openai_profile else ["disabled"])
+        if hasattr(self, "text_correction_model_entry"):
+            self.text_correction_model_entry.state(["!disabled"] if correction_enabled else ["disabled"])
+
+        help_text = PROFILE_HELP_TEXT.get(profile, "Выберите профиль распознавания.")
+        if correction_enabled:
+            help_text += " Включена отдельная GPT-правка уже распознанного текста перед вставкой."
+        self.profile_info_var.set(help_text)
 
     def _save(self) -> None:
         hotkey = self.hotkey_var.get().strip()
-        profile = self.profile_var.get().strip()
+        profile = self._profile_id_from_label(self.profile_var.get())
         language = LANGUAGE_OPTIONS.get(self.language_var.get(), "ru")
         openai_model = self.openai_model_var.get().strip()
         text_correction_model = self.text_correction_model_var.get().strip()
@@ -219,7 +271,7 @@ class SettingsWindow:
         if profile not in (self.config.get("profiles") or {}):
             messagebox.showerror("Голос", "Такого профиля нет в config.yaml.")
             return
-        if not openai_model:
+        if profile == "openai" and not openai_model:
             messagebox.showerror("Голос", "Укажите модель распознавания GPT.")
             return
         if self.text_correction_enabled_var.get() and not text_correction_model:
@@ -259,6 +311,18 @@ class SettingsWindow:
             if code == language:
                 return label
         return "Русский"
+
+    def _ordered_profile_ids(self, profile_ids: list[str]) -> list[str]:
+        ordered = [profile for profile in PROFILE_ORDER if profile in profile_ids]
+        ordered.extend(sorted(profile for profile in profile_ids if profile not in PROFILE_ORDER))
+        return ordered
+
+    def _profile_label(self, profile: str) -> str:
+        return PROFILE_LABELS.get(profile, profile)
+
+    def _profile_id_from_label(self, label: str) -> str:
+        reverse = {display: profile for profile, display in PROFILE_LABELS.items()}
+        return reverse.get(label.strip(), label.strip())
 
 
 def open_settings_window(config_path: str | Path = "config.yaml") -> None:
