@@ -32,7 +32,13 @@ from voice_input.text_corrector import OpenAITextCorrector
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
-from voice_input.updater import check_for_update
+from voice_input.updater import (
+    check_for_update,
+    clear_update_install_request,
+    read_update_install_request,
+    schedule_update_install,
+    update_install_request_path,
+)
 from voice_input.utils import clean_transcript
 from voice_input.version import APP_NAME, APP_VERSION
 
@@ -121,6 +127,7 @@ class VoiceInputApp:
         self.set_status("готов")
         self.hotkey.start()
         self._start_restart_request_watcher()
+        self._start_update_install_request_watcher()
         if self.config.performance.preload_model:
             self._preload_local_backend()
         else:
@@ -185,6 +192,32 @@ class VoiceInputApp:
                 return
 
         threading.Thread(target=worker, name="restart-request-watcher", daemon=True).start()
+
+    def _start_update_install_request_watcher(self) -> None:
+        request_path = update_install_request_path()
+
+        def worker() -> None:
+            while not self._stop_event.wait(0.5):
+                if not request_path.exists():
+                    continue
+                try:
+                    request = read_update_install_request()
+                    clear_update_install_request()
+                    script_path = schedule_update_install(request, self.config_manager.path, wait_pid=os.getpid())
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.exception("Could not schedule update install")
+                    self._notify("Голос: ошибка", f"Не удалось установить обновление: {exc}")
+                    clear_update_install_request()
+                    return
+
+                self.logger.info("Update install scheduled tag=%s script=%s", request.tag, script_path)
+                self._notify("Голос", "Устанавливаю обновление. Голос сейчас перезапустится.")
+                self.shutdown()
+                if self.tray is not None:
+                    self.tray.stop()
+                return
+
+        threading.Thread(target=worker, name="update-install-request-watcher", daemon=True).start()
 
     def _load_dotenv(self) -> None:
         load_dotenv_file()

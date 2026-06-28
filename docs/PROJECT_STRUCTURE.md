@@ -81,7 +81,7 @@ These folders are local runtime output and are not committed:
 - `voice_input/settings_window.py` - user-facing settings window.
 - `voice_input/shortcuts.py` - Windows Start Menu and Startup shortcut management.
 - `voice_input/support.py` - manual GitHub support request and diagnostic package helper.
-- `voice_input/updater.py` - GitHub Release update check and verified package download.
+- `voice_input/updater.py` - GitHub Release update check, verified package download, extraction, and Windows update installer request.
 - `voice_input/version.py` - application version, release tag, and GitHub repository id.
 - `voice_input/diagnostics.py` - safe diagnostic zip collection.
 - `voice_input/single_instance.py` - Windows mutex to prevent duplicate app instances.

@@ -14,7 +14,7 @@ from voice_input.paths import resolve_runtime_path
 from voice_input.restart import write_restart_request
 from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
 from voice_input.support import create_support_package, open_support_package, support_token_from_env, upload_support_package
-from voice_input.updater import UpdateInfo, check_for_update, download_update
+from voice_input.updater import PreparedUpdate, UpdateInfo, check_for_update, prepare_update_install, write_update_install_request
 from voice_input.version import APP_VERSION
 
 
@@ -316,7 +316,7 @@ class SettingsWindow:
         buttons = ttk.Frame(panel, style="Panel.TFrame")
         buttons.pack(anchor="w")
         ttk.Button(buttons, text="Проверить обновления", style="Accent.TButton", command=self._check_updates).pack(side="left")
-        self.download_update_button = ttk.Button(buttons, text="Скачать обновление", command=self._download_update)
+        self.download_update_button = ttk.Button(buttons, text="Скачать и установить", command=self._download_update)
         self.download_update_button.pack(side="left", padx=(10, 0))
         self.download_update_button.state(["disabled"])
         ttk.Button(buttons, text="Открыть GitHub", command=self._open_github).pack(side="left", padx=(10, 0))
@@ -540,22 +540,31 @@ class SettingsWindow:
         if self.latest_update_info is None:
             return
         info = self.latest_update_info
+        if not messagebox.askyesno(
+            "Голос",
+            f"Скачать и установить версию {info.version}? Голос закроется и запустится заново после обновления.",
+        ):
+            return
         self.update_status_var.set(f"Скачиваю {info.asset}...")
+        if self.download_update_button is not None:
+            self.download_update_button.state(["disabled"])
 
         def worker() -> None:
             try:
-                path = download_update(info)
+                prepared = prepare_update_install(info)
+                write_update_install_request(prepared)
             except Exception as exc:  # noqa: BLE001
                 self.root.after(0, lambda: self._show_update_error(exc))
                 return
-            self.root.after(0, lambda: self._show_download_result(path))
+            self.root.after(0, lambda: self._show_download_result(prepared))
 
         threading.Thread(target=worker, name="download-update", daemon=True).start()
 
-    def _show_download_result(self, path: Path) -> None:
+    def _show_download_result(self, prepared: PreparedUpdate) -> None:
         self.update_status_var.set("Обновление скачано и проверено.")
-        self.update_detail_var.set(str(path))
-        os.startfile(str(path.parent))  # noqa: S606 - Windows desktop helper.
+        self.update_detail_var.set(str(prepared.package_path))
+        messagebox.showinfo("Голос", "Обновление готово. Голос закроется, заменит файлы и запустится заново.")
+        self.root.destroy()
 
     def _open_github(self) -> None:
         os.startfile("https://github.com/koskin2007-eng/golos")  # noqa: S606 - Windows desktop helper.

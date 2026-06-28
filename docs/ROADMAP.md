@@ -57,6 +57,7 @@ Current implementation:
 - settings tab `Обновления` shows the current version;
 - CLI command `--check-update` reads public `latest.json`;
 - update package download verifies SHA256 before saving to `updates/`.
+- settings can download a verified update package, ask the running tray app to close, replace application files with a small PowerShell updater, and restart Golos.
 
 ## Windows install/startup shortcuts
 
