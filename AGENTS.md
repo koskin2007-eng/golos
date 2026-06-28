@@ -45,6 +45,12 @@
 .\.venv\Scripts\python.exe -m voice_input.app --collect-diagnostics
 ```
 
+Проверка ярлыков Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --shortcut-status
+```
+
 ## Сборка EXE
 
 Во время активной разработки EXE не пересобирать без явной причины. Это долго и мешает быстрым итерациям.

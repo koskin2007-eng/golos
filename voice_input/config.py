@@ -356,6 +356,11 @@ class ConfigManager:
         raw["recognition_profile"] = profile_name
         self._write_yaml_mapping(raw)
 
+    def set_startup_enabled(self, enabled: bool) -> None:
+        raw = self._read_yaml_mapping()
+        raw.setdefault("startup", {})["run_on_windows_startup"] = bool(enabled)
+        self._write_yaml_mapping(raw)
+
     def load(self) -> AppConfig:
         created = False
         if not self.path.exists():

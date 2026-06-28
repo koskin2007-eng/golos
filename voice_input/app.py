@@ -20,6 +20,7 @@ from voice_input.hotkey import PushToTalkHotkey
 from voice_input.paste import TextPaster
 from voice_input.paths import resolve_runtime_path
 from voice_input.recorder import AudioRecorder, RecordingResult
+from voice_input.shortcuts import install_shortcuts, remove_shortcuts, shortcut_status, sync_shortcuts
 from voice_input.single_instance import SingleInstanceGuard
 from voice_input.settings_window import open_settings_window
 from voice_input.text_corrector import OpenAITextCorrector
@@ -69,6 +70,7 @@ class VoiceInputApp:
         )
         self.logger.info("Application version=%s", APP_VERSION)
         self._log_backend_settings()
+        self._sync_windows_shortcuts()
         self.recorder.log_input_device_info()
 
         if not no_tray:
@@ -140,6 +142,17 @@ class VoiceInputApp:
             self.logger.info("Backend selected backend=openai model=%s api_key_present=%s", self.config.openai.model, bool(os.getenv("OPENAI_API_KEY")))
         else:
             self.logger.warning("Unknown backend in config backend=%s", backend)
+
+    def _sync_windows_shortcuts(self) -> None:
+        try:
+            status = sync_shortcuts(self.config_manager.path, self.config.startup.run_on_windows_startup)
+            self.logger.info(
+                "Windows shortcuts synced start_menu=%s startup=%s",
+                status.start_menu_exists,
+                status.startup_exists,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Could not sync Windows shortcuts: %s", exc)
 
     def _preload_local_backend(self) -> None:
         if self.config.backend not in {"local_fast", "local_quality"}:
@@ -366,6 +379,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--collect-diagnostics", action="store_true", help="Создать zip диагностики и выйти.")
     parser.add_argument("--settings", action="store_true", help="Открыть окно настроек и выйти.")
     parser.add_argument("--check-update", action="store_true", help="Проверить обновления через GitHub Releases.")
+    parser.add_argument("--shortcut-status", action="store_true", help="Показать статус ярлыков Windows.")
+    parser.add_argument("--install-shortcuts", action="store_true", help="Создать ярлыки в меню Пуск и автозапуске.")
+    parser.add_argument("--remove-shortcuts", action="store_true", help="Удалить ярлыки Голос из меню Пуск и автозапуска.")
     parser.add_argument("--version", action="store_true", help="Показать версию и выйти.")
     return parser
 
@@ -392,6 +408,26 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         config_manager = ConfigManager(args.config)
+
+        if args.shortcut_status:
+            status = shortcut_status()
+            print(f"start_menu={str(status.start_menu_exists).lower()} path={status.start_menu_path}")
+            print(f"startup={str(status.startup_exists).lower()} path={status.startup_path}")
+            return 0
+
+        if args.install_shortcuts:
+            config_manager.set_startup_enabled(True)
+            status = install_shortcuts(config_manager.path, run_on_windows_startup=True)
+            print(f"Start menu shortcut: {status.start_menu_path}")
+            print(f"Startup shortcut: {status.startup_path}")
+            return 0
+
+        if args.remove_shortcuts:
+            config_manager.set_startup_enabled(False)
+            status = remove_shortcuts()
+            print(f"Start menu shortcut removed: {not status.start_menu_exists}")
+            print(f"Startup shortcut removed: {not status.startup_exists}")
+            return 0
 
         if args.list_profiles:
             active = config_manager.get_selected_profile()

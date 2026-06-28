@@ -1,0 +1,168 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from voice_input.paths import runtime_base_dir
+
+
+APP_SHORTCUT_NAME = "Голос.lnk"
+
+
+@dataclass(slots=True)
+class ShortcutStatus:
+    start_menu_path: Path | None
+    startup_path: Path | None
+    start_menu_exists: bool
+    startup_exists: bool
+
+
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def shortcut_status() -> ShortcutStatus:
+    start_menu_path = _start_menu_shortcut_path()
+    startup_path = _startup_shortcut_path()
+    return ShortcutStatus(
+        start_menu_path=start_menu_path,
+        startup_path=startup_path,
+        start_menu_exists=bool(start_menu_path and start_menu_path.exists()),
+        startup_exists=bool(startup_path and startup_path.exists()),
+    )
+
+
+def sync_shortcuts(config_path: str | Path, run_on_windows_startup: bool) -> ShortcutStatus:
+    if not is_windows():
+        return shortcut_status()
+
+    create_start_menu_shortcut(config_path)
+    if run_on_windows_startup:
+        create_startup_shortcut(config_path)
+    else:
+        remove_startup_shortcut()
+    return shortcut_status()
+
+
+def install_shortcuts(config_path: str | Path, run_on_windows_startup: bool = True) -> ShortcutStatus:
+    if not is_windows():
+        return shortcut_status()
+
+    create_start_menu_shortcut(config_path)
+    if run_on_windows_startup:
+        create_startup_shortcut(config_path)
+    return shortcut_status()
+
+
+def remove_shortcuts() -> ShortcutStatus:
+    remove_start_menu_shortcut()
+    remove_startup_shortcut()
+    return shortcut_status()
+
+
+def create_start_menu_shortcut(config_path: str | Path) -> None:
+    path = _start_menu_shortcut_path()
+    if path is None:
+        return
+    _create_shortcut(path, config_path)
+
+
+def create_startup_shortcut(config_path: str | Path) -> None:
+    path = _startup_shortcut_path()
+    if path is None:
+        return
+    _create_shortcut(path, config_path)
+
+
+def remove_start_menu_shortcut() -> None:
+    _remove_shortcut(_start_menu_shortcut_path())
+
+
+def remove_startup_shortcut() -> None:
+    _remove_shortcut(_startup_shortcut_path())
+
+
+def _start_menu_shortcut_path() -> Path | None:
+    appdata = os.getenv("APPDATA")
+    if not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / APP_SHORTCUT_NAME
+
+
+def _startup_shortcut_path() -> Path | None:
+    appdata = os.getenv("APPDATA")
+    if not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / APP_SHORTCUT_NAME
+
+
+def _remove_shortcut(path: Path | None) -> None:
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
+def _create_shortcut(shortcut_path: Path, config_path: str | Path) -> None:
+    target_path, arguments, working_directory = _launch_command(config_path)
+    shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "GOLOS_SHORTCUT_PATH": str(shortcut_path),
+            "GOLOS_SHORTCUT_TARGET": str(target_path),
+            "GOLOS_SHORTCUT_ARGS": arguments,
+            "GOLOS_SHORTCUT_WORKDIR": str(working_directory),
+            "GOLOS_SHORTCUT_DESCRIPTION": "Голосовой ввод Голос",
+            "GOLOS_SHORTCUT_ICON": f"{target_path},0",
+        }
+    )
+    subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            _CREATE_SHORTCUT_SCRIPT,
+        ],
+        env=env,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _launch_command(config_path: str | Path) -> tuple[Path, str, Path]:
+    resolved_config_path = Path(config_path).resolve()
+    if getattr(sys, "frozen", False):
+        target_path = Path(sys.executable).resolve()
+        arguments = subprocess.list2cmdline(["--config", str(resolved_config_path)])
+    else:
+        target_path = Path(sys.executable).resolve()
+        arguments = subprocess.list2cmdline(["-m", "voice_input.app", "--config", str(resolved_config_path)])
+    return target_path, arguments, runtime_base_dir()
+
+
+_CREATE_SHORTCUT_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+$shortcutPath = $env:GOLOS_SHORTCUT_PATH
+$targetPath = $env:GOLOS_SHORTCUT_TARGET
+$arguments = $env:GOLOS_SHORTCUT_ARGS
+$workingDirectory = $env:GOLOS_SHORTCUT_WORKDIR
+$description = $env:GOLOS_SHORTCUT_DESCRIPTION
+$iconLocation = $env:GOLOS_SHORTCUT_ICON
+
+New-Item -ItemType Directory -Path (Split-Path -Parent $shortcutPath) -Force | Out-Null
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $targetPath
+$shortcut.Arguments = $arguments
+$shortcut.WorkingDirectory = $workingDirectory
+$shortcut.Description = $description
+$shortcut.IconLocation = $iconLocation
+$shortcut.WindowStyle = 7
+$shortcut.Save()
+"""

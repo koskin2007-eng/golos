@@ -60,6 +60,18 @@
 .\.venv\Scripts\python.exe -m voice_input.app --check-update
 ```
 
+Создать ярлык в меню «Пуск» и включить автозапуск Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --install-shortcuts
+```
+
+Проверить, есть ли ярлыки Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --shortcut-status
+```
+
 EXE во время активной доработки не пересобираем. Сборка нужна только перед передачей программы другому человеку или перед GitHub Release.
 
 ## 4. Как выбрать микрофон

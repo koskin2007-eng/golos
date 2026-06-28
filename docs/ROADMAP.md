@@ -58,6 +58,16 @@ Current implementation:
 - CLI command `--check-update` reads public `latest.json`;
 - update package download verifies SHA256 before saving to `updates/`.
 
+## Windows install/startup shortcuts
+
+Current implementation:
+
+- the app creates a Start Menu shortcut for `Голос`;
+- settings can enable or disable launch with Windows;
+- CLI command `--install-shortcuts` creates Start Menu and Startup shortcuts;
+- CLI command `--shortcut-status` prints the current shortcut state;
+- CLI command `--remove-shortcuts` removes app-owned Windows shortcuts.
+
 Detailed staged implementation plan:
 
 ```text

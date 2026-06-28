@@ -10,6 +10,7 @@ from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, deep_merge
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
+from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
 from voice_input.updater import UpdateInfo, check_for_update, download_update
 from voice_input.version import APP_VERSION
 
@@ -98,6 +99,7 @@ class SettingsWindow:
         self.correction_model_info_var = tk.StringVar()
         self.update_status_var = tk.StringVar(value="Обновления ещё не проверялись.")
         self.update_detail_var = tk.StringVar(value="")
+        self.shortcut_status_var = tk.StringVar(value=self._shortcut_status_text())
         self.latest_update_info: UpdateInfo | None = None
         self.download_update_button: ttk.Button | None = None
 
@@ -208,9 +210,18 @@ class SettingsWindow:
         self._field(panel, 1, "Горячая клавиша", ttk.Entry(panel, textvariable=self.hotkey_var, width=24))
         self._field(panel, 2, "Язык", ttk.Combobox(panel, textvariable=self.language_var, values=list(LANGUAGE_OPTIONS), state="readonly", width=22))
         ttk.Checkbutton(panel, text="Звуковой сигнал при записи", variable=self.beep_var).grid(row=3, column=1, sticky="w", pady=8)
-        autostart = ttk.Checkbutton(panel, text="Автозапуск Windows (следующий шаг)", variable=self.autostart_var)
+        autostart = ttk.Checkbutton(panel, text="Запускать Голос вместе с Windows", variable=self.autostart_var)
         autostart.grid(row=4, column=1, sticky="w", pady=8)
-        autostart.state(["disabled"])
+        if not is_windows():
+            autostart.state(["disabled"])
+        tk.Label(
+            panel,
+            textvariable=self.shortcut_status_var,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=560,
+        ).grid(row=5, column=1, sticky="w", pady=(2, 8))
         panel.columnconfigure(1, weight=1)
 
     def _build_recognition_tab(self, parent: ttk.Frame) -> None:
@@ -352,10 +363,28 @@ class SettingsWindow:
         raw.setdefault("text_correction", {})["enabled"] = bool(self.text_correction_enabled_var.get())
         raw.setdefault("text_correction", {})["model"] = text_correction_model
         raw.setdefault("feedback", {})["beep_on_recording"] = bool(self.beep_var.get())
+        raw.setdefault("startup", {})["run_on_windows_startup"] = bool(self.autostart_var.get())
 
         self.config_manager._write_yaml_mapping(raw)
+        self._apply_shortcuts()
         self.status_var.set("Сохранено. Для применения горячей клавиши и профиля перезапустите Голос.")
         messagebox.showinfo("Голос", "Настройки сохранены.")
+
+    def _apply_shortcuts(self) -> None:
+        try:
+            sync_shortcuts(self.config_manager.path, bool(self.autostart_var.get()))
+            self.shortcut_status_var.set(self._shortcut_status_text())
+        except Exception as exc:  # noqa: BLE001
+            self.shortcut_status_var.set("Не удалось обновить ярлыки Windows.")
+            messagebox.showwarning("Голос", f"Настройки сохранены, но ярлыки Windows не обновились: {exc}")
+
+    def _shortcut_status_text(self) -> str:
+        if not is_windows():
+            return "Автозапуск доступен только в Windows."
+        status = shortcut_status()
+        start_menu = "есть в меню Пуск" if status.start_menu_exists else "ярлык в меню Пуск будет создан при сохранении"
+        startup = "автозапуск включён" if status.startup_exists else "автозапуск выключен"
+        return f"{start_menu}; {startup}."
 
     def _open_log(self) -> None:
         path = resolve_runtime_path(DEFAULT_LOG_PATH)
