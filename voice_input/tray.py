@@ -18,6 +18,7 @@ class TrayController:
         diagnostics_collector: Callable[[], Path] | None = None,
         support_request_creator: Callable[[], Path] | None = None,
         settings_opener: Callable[[], None] | None = None,
+        restart_requester: Callable[[], None] | None = None,
     ) -> None:
         self.config_path = Path(config_path).resolve()
         self.log_path = Path(log_path).resolve()
@@ -26,6 +27,7 @@ class TrayController:
         self.diagnostics_collector = diagnostics_collector
         self.support_request_creator = support_request_creator
         self.settings_opener = settings_opener
+        self.restart_requester = restart_requester
         self._icon = None
         self._lock = threading.Lock()
 
@@ -48,6 +50,7 @@ class TrayController:
         menu = pystray.Menu(
             pystray.MenuItem(lambda _item: f"Статус: {self.status_getter()}", None, enabled=False),
             pystray.MenuItem("Открыть настройки", self._open_settings),
+            pystray.MenuItem("Перезапустить Голос", self._restart, enabled=self.restart_requester is not None),
             pystray.MenuItem("Открыть лог", lambda _icon, _item: self._open_path(self.log_path)),
             pystray.MenuItem("Собрать диагностику", self._collect_diagnostics, enabled=self.diagnostics_collector is not None),
             pystray.MenuItem("Отправить диагностику", self._prepare_support_request, enabled=self.support_request_creator is not None),
@@ -85,6 +88,12 @@ class TrayController:
     def _exit(self, icon, item) -> None:  # noqa: ANN001
         self.on_exit()
         icon.stop()
+
+    def _restart(self, icon, item) -> None:  # noqa: ANN001
+        if self.restart_requester is not None:
+            self.restart_requester()
+            return
+        self._exit(icon, item)
 
     def _collect_diagnostics(self, icon, item) -> None:  # noqa: ANN001
         if self.diagnostics_collector is None:

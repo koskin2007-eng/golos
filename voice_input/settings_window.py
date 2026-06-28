@@ -11,6 +11,7 @@ from voice_input.diagnostics import collect_diagnostics
 from voice_input.env_file import OPENAI_API_KEY_NAME, default_env_path, env_value_exists, normalize_openai_api_key, set_env_value
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
+from voice_input.restart import write_restart_request
 from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
 from voice_input.support import create_support_package, open_support_package, support_token_from_env, upload_support_package
 from voice_input.updater import UpdateInfo, check_for_update, download_update
@@ -198,6 +199,8 @@ class SettingsWindow:
 
         footer = ttk.Frame(body)
         footer.pack(fill="x", pady=(16, 0))
+        ttk.Button(footer, text="Перезапустить Голос", command=self._request_restart).pack(side="left")
+        ttk.Button(footer, text="Создать ярлыки Windows", command=self._create_shortcuts_now).pack(side="left", padx=(10, 0))
         ttk.Button(footer, text="Сохранить", style="Accent.TButton", command=self._save).pack(side="right")
         ttk.Button(footer, text="Закрыть", command=self.root.destroy).pack(side="right", padx=(0, 10))
 
@@ -413,6 +416,27 @@ class SettingsWindow:
         except Exception as exc:  # noqa: BLE001
             self.shortcut_status_var.set("Не удалось обновить ярлыки Windows.")
             messagebox.showwarning("Голос", f"Настройки сохранены, но ярлыки Windows не обновились: {exc}")
+
+    def _create_shortcuts_now(self) -> None:
+        try:
+            sync_shortcuts(self.config_manager.path, bool(self.autostart_var.get()))
+            self.shortcut_status_var.set(self._shortcut_status_text())
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Голос", f"Не удалось создать ярлыки Windows: {exc}")
+            return
+        messagebox.showinfo("Голос", "Ярлык в меню Пуск создан. Автозапуск обновлён по текущей галочке.")
+
+    def _request_restart(self) -> None:
+        if not messagebox.askyesno("Голос", "Перезапустить Голос сейчас? Несохранённые изменения в этом окне не применятся."):
+            return
+        try:
+            write_restart_request()
+        except OSError as exc:
+            messagebox.showerror("Голос", f"Не удалось отправить команду перезапуска: {exc}")
+            return
+        self.status_var.set("Команда перезапуска отправлена.")
+        messagebox.showinfo("Голос", "Голос перезапустится через несколько секунд.")
+        self.root.destroy()
 
     def _shortcut_status_text(self) -> str:
         if not is_windows():

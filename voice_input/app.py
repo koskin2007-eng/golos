@@ -9,6 +9,8 @@ if __package__ in (None, ""):
 import argparse
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -19,8 +21,9 @@ from voice_input.env_file import default_env_path
 from voice_input.logger import DEFAULT_LOG_PATH, setup_logging
 from voice_input.hotkey import PushToTalkHotkey
 from voice_input.paste import TextPaster
-from voice_input.paths import resolve_runtime_path
+from voice_input.paths import resolve_runtime_path, runtime_base_dir
 from voice_input.recorder import AudioRecorder, RecordingResult
+from voice_input.restart import clear_restart_request, restart_request_path
 from voice_input.shortcuts import install_shortcuts, remove_shortcuts, shortcut_status, sync_shortcuts
 from voice_input.single_instance import SingleInstanceGuard
 from voice_input.settings_window import open_settings_window
@@ -37,6 +40,14 @@ from voice_input.version import APP_NAME, APP_VERSION
 RECORD_START_BEEP_HZ = 900
 RECORD_STOP_BEEP_HZ = 520
 RECORD_BEEP_DURATION_MS = 80
+RESTART_DELAY_MS = 1200
+
+
+_WINDOWS_RESTART_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+Start-Sleep -Milliseconds $env:GOLOS_RESTART_DELAY_MS
+Start-Process -FilePath $env:GOLOS_RESTART_TARGET -ArgumentList $env:GOLOS_RESTART_ARGS -WorkingDirectory $env:GOLOS_RESTART_CWD -WindowStyle Hidden
+"""
 
 
 def load_dotenv_file() -> None:
@@ -65,8 +76,11 @@ class VoiceInputApp:
         self._recording = False
         self._processing = False
         self._status = "запуск"
+        self._no_tray = False
+        self._restart_requested = False
 
     def run(self, no_tray: bool = False) -> None:
+        self._no_tray = no_tray
         self._load_dotenv()
         self.logger.info(
             "Application started backend=%s profile=%s hotkey=%s language=%s",
@@ -89,6 +103,7 @@ class VoiceInputApp:
                 diagnostics_collector=self.collect_diagnostics,
                 support_request_creator=self.prepare_support_request,
                 settings_opener=self.open_settings,
+                restart_requester=self.restart,
             )
 
         self.hotkey = PushToTalkHotkey(
@@ -100,6 +115,7 @@ class VoiceInputApp:
 
         self.set_status("готов")
         self.hotkey.start()
+        self._start_restart_request_watcher()
         if self.config.performance.preload_model:
             self._preload_local_backend()
         else:
@@ -121,6 +137,26 @@ class VoiceInputApp:
         self.set_status("остановлено")
         self.logger.info("Application stopped")
 
+    def restart(self) -> None:
+        with self._state_lock:
+            if self._restart_requested:
+                return
+            self._restart_requested = True
+
+        try:
+            self._schedule_restart()
+        except Exception as exc:  # noqa: BLE001
+            with self._state_lock:
+                self._restart_requested = False
+            self.logger.exception("Could not schedule restart")
+            self._notify("Голос: ошибка", f"Не удалось перезапустить: {exc}")
+            return
+
+        self.logger.info("Restart scheduled")
+        self.shutdown()
+        if self.tray is not None:
+            self.tray.stop()
+
     def get_status(self) -> str:
         with self._state_lock:
             return self._status
@@ -130,6 +166,20 @@ class VoiceInputApp:
             self._status = status
         if self.tray is not None:
             self.tray.update_menu()
+
+    def _start_restart_request_watcher(self) -> None:
+        request_path = restart_request_path()
+        clear_restart_request()
+
+        def worker() -> None:
+            while not self._stop_event.wait(0.5):
+                if not request_path.exists():
+                    continue
+                request_path.unlink(missing_ok=True)
+                self.restart()
+                return
+
+        threading.Thread(target=worker, name="restart-request-watcher", daemon=True).start()
 
     def _load_dotenv(self) -> None:
         load_dotenv_file()
@@ -356,9 +406,6 @@ class VoiceInputApp:
         return package.archive_path
 
     def open_settings(self) -> None:
-        import subprocess
-        import sys
-
         if getattr(sys, "frozen", False):
             command = [sys.executable, "--settings", "--config", str(self.config_manager.path)]
         else:
@@ -369,6 +416,53 @@ class VoiceInputApp:
             cwd=str(Path.cwd()),
             close_fds=True,
         )
+
+    def _schedule_restart(self) -> None:
+        command = self._launch_command()
+        if os.name == "nt":
+            env = os.environ.copy()
+            env.update(
+                {
+                    "GOLOS_RESTART_DELAY_MS": str(RESTART_DELAY_MS),
+                    "GOLOS_RESTART_TARGET": command[0],
+                    "GOLOS_RESTART_ARGS": subprocess.list2cmdline(command[1:]),
+                    "GOLOS_RESTART_CWD": str(runtime_base_dir()),
+                }
+            )
+            subprocess.Popen(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    _WINDOWS_RESTART_SCRIPT,
+                ],
+                cwd=str(runtime_base_dir()),
+                env=env,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+
+        helper = (
+            "import subprocess,time; "
+            f"time.sleep({RESTART_DELAY_MS / 1000:.3f}); "
+            f"subprocess.Popen({command!r}, cwd={str(runtime_base_dir())!r})"
+        )
+        subprocess.Popen([sys.executable, "-c", helper], close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _launch_command(self) -> list[str]:
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--config", str(self.config_manager.path)]
+        else:
+            command = [sys.executable, "-m", "voice_input.app", "--config", str(self.config_manager.path)]
+        if self._no_tray:
+            command.append("--no-tray")
+        return command
 
     def _beep(self, frequency: int) -> None:
         if not self.config.feedback.beep_on_recording:
