@@ -43,6 +43,14 @@ Recommended path: GitHub Releases as the update source.
 
 This keeps updates centralized without needing a custom server.
 
+Stage 1 release commands:
+
+```powershell
+.\package_release.ps1
+```
+
+The package script creates `dist/release/vX.Y.Z/Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
+
 Detailed staged implementation plan:
 
 ```text

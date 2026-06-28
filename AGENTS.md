@@ -61,6 +61,14 @@
 .\build_exe.ps1
 ```
 
+Полная подготовка GitHub Release:
+
+```powershell
+.\package_release.ps1
+```
+
+`package_release.ps1` создаёт `Golos-win64.zip`, `Golos-win64.sha256` и `latest.json` в `dist/release/`.
+
 ## Проверки
 
 После изменений запускать доступные проверки:

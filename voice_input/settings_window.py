@@ -9,6 +9,7 @@ from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, deep_merge
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
+from voice_input.version import APP_VERSION
 
 
 COLORS = {
@@ -249,6 +250,14 @@ class SettingsWindow:
     def _build_updates_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
         ttk.Label(panel, text="Обновления", style="Section.TLabel").pack(anchor="w", pady=(0, 12))
+        tk.Label(
+            panel,
+            text=f"Текущая версия: {APP_VERSION}",
+            bg=COLORS["panel"],
+            fg=COLORS["ink"],
+            justify="left",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
         tk.Label(
             panel,
             text="Проверка и установка обновлений через GitHub Releases будет добавлена следующим шагом.",

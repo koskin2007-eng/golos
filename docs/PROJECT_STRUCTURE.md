@@ -8,6 +8,7 @@
 ├─ requirements.txt
 ├─ run.ps1
 ├─ build_exe.ps1
+├─ package_release.ps1
 ├─ docs/
 │  ├─ PROJECT_STRUCTURE.md
 │  ├─ REMOTE_RELEASE_SUPPORT_PLAN.md
@@ -39,6 +40,7 @@
 - `requirements.txt` - Python dependencies.
 - `run.ps1` - normal development/user launch without EXE rebuild.
 - `build_exe.ps1` - PyInstaller release build script.
+- `package_release.ps1` - release packager that creates `Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
 
 ## Docs
 
@@ -68,6 +70,7 @@ These folders are local runtime output and are not committed:
 - `voice_input/paste.py` - text paste through clipboard and keyboard shortcuts.
 - `voice_input/tray.py` - system tray UI.
 - `voice_input/settings_window.py` - user-facing settings window.
+- `voice_input/version.py` - application version, release tag, and GitHub repository id.
 - `voice_input/diagnostics.py` - safe diagnostic zip collection.
 - `voice_input/single_instance.py` - Windows mutex to prevent duplicate app instances.
 - `voice_input/logger.py` - rotating file and console logs.

@@ -27,6 +27,7 @@ from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
 from voice_input.utils import clean_transcript
+from voice_input.version import APP_NAME, APP_VERSION
 
 
 def load_dotenv_file() -> None:
@@ -65,6 +66,7 @@ class VoiceInputApp:
             self.config.hotkey,
             self.config.language,
         )
+        self.logger.info("Application version=%s", APP_VERSION)
         self._log_backend_settings()
         self.recorder.log_input_device_info()
 
@@ -362,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--set-profile", default="", help="Выбрать recognition_profile в config.yaml и выйти.")
     parser.add_argument("--collect-diagnostics", action="store_true", help="Создать zip диагностики и выйти.")
     parser.add_argument("--settings", action="store_true", help="Открыть окно настроек и выйти.")
+    parser.add_argument("--version", action="store_true", help="Показать версию и выйти.")
     return parser
 
 
@@ -371,6 +374,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         load_dotenv_file()
+        if args.version:
+            print(f"{APP_NAME} {APP_VERSION}")
+            return 0
+
         config_manager = ConfigManager(args.config)
 
         if args.list_profiles:

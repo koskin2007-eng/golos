@@ -219,6 +219,22 @@ dist/Golos/
 
 Сборка использует PyInstaller. Папки `dist/` и `build/` исключены из Git.
 
+Для подготовки GitHub Release:
+
+```powershell
+.\package_release.ps1
+```
+
+Скрипт соберёт EXE и подготовит:
+
+```text
+dist/release/v0.1.0/Golos-win64.zip
+dist/release/v0.1.0/Golos-win64.sha256
+dist/release/v0.1.0/latest.json
+```
+
+В EXE не зашиваются `.env`, OpenAI API key и локальные пользовательские настройки.
+
 ## Структура проекта
 
 Подробная структура лежит в:

@@ -13,9 +13,11 @@ if (-not (Test-Path $VenvPath)) {
 }
 
 $PythonPath = Join-Path $VenvPath "Scripts\python.exe"
-$ConfigPath = Join-Path $ProjectRoot "config.yaml"
 & $PythonPath -m pip install --upgrade pip
 & $PythonPath -m pip install -r requirements.txt
+
+$Version = (& $PythonPath -c "from voice_input.version import APP_VERSION; print(APP_VERSION)").Trim()
+Write-Host "Building Golos version $Version"
 
 & $PythonPath -m PyInstaller `
     --noconfirm `
@@ -25,7 +27,6 @@ $ConfigPath = Join-Path $ProjectRoot "config.yaml"
     --distpath dist `
     --workpath build `
     --specpath build `
-    --add-data "$ConfigPath;." `
     --collect-all faster_whisper `
     voice_input\app.py
 

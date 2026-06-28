@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from voice_input.paths import resolve_runtime_path, runtime_base_dir
+from voice_input.version import APP_VERSION
 
 
 SECRET_LINE_RE = re.compile(r"^(\s*(?:api[_-]?key|token|secret|password)\s*[:=]\s*).*$", re.IGNORECASE)
@@ -46,6 +47,7 @@ def _runtime_info(config_path: Path, log_path: Path) -> str:
     return "\n".join(
         [
             f"created_at={datetime.now().isoformat(timespec='seconds')}",
+            f"app_version={APP_VERSION}",
             f"platform={platform.platform()}",
             f"python={sys.version.replace(chr(10), ' ')}",
             f"executable={sys.executable}",
