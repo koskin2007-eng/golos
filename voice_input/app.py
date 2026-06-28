@@ -23,6 +23,7 @@ from voice_input.recorder import AudioRecorder, RecordingResult
 from voice_input.shortcuts import install_shortcuts, remove_shortcuts, shortcut_status, sync_shortcuts
 from voice_input.single_instance import SingleInstanceGuard
 from voice_input.settings_window import open_settings_window
+from voice_input.support import create_support_package, open_support_package
 from voice_input.text_corrector import OpenAITextCorrector
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
@@ -80,6 +81,7 @@ class VoiceInputApp:
                 status_getter=self.get_status,
                 on_exit=self.shutdown,
                 diagnostics_collector=self.collect_diagnostics,
+                support_request_creator=self.prepare_support_request,
                 settings_opener=self.open_settings,
             )
 
@@ -330,6 +332,12 @@ class VoiceInputApp:
         self.logger.info("Diagnostics collected path=%s", archive_path)
         return archive_path
 
+    def prepare_support_request(self) -> Path:
+        package = create_support_package(self.config_manager.path, self.log_path)
+        self.logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
+        open_support_package(package)
+        return package.archive_path
+
     def open_settings(self) -> None:
         import subprocess
         import sys
@@ -377,6 +385,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-profiles", action="store_true", help="Показать профили распознавания из config.yaml.")
     parser.add_argument("--set-profile", default="", help="Выбрать recognition_profile в config.yaml и выйти.")
     parser.add_argument("--collect-diagnostics", action="store_true", help="Создать zip диагностики и выйти.")
+    parser.add_argument("--prepare-support-request", action="store_true", help="Создать диагностику и открыть обращение на GitHub.")
     parser.add_argument("--settings", action="store_true", help="Открыть окно настроек и выйти.")
     parser.add_argument("--check-update", action="store_true", help="Проверить обновления через GitHub Releases.")
     parser.add_argument("--shortcut-status", action="store_true", help="Показать статус ярлыков Windows.")
@@ -457,6 +466,15 @@ def main(argv: list[str] | None = None) -> int:
             archive_path = collect_diagnostics(config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
             logger.info("Diagnostics collected path=%s", archive_path)
             print(f"Diagnostics saved: {archive_path}")
+            return 0
+
+        if args.prepare_support_request:
+            package = create_support_package(config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
+            open_support_package(package)
+            logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
+            print(f"Diagnostics saved: {package.archive_path}")
+            print(f"Issue text saved: {package.issue_body_path}")
+            print(f"GitHub issue URL: {package.issue_url}")
             return 0
 
         if args.list_devices:

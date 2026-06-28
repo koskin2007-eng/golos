@@ -51,6 +51,12 @@
 .\.venv\Scripts\python.exe -m voice_input.app --shortcut-status
 ```
 
+Подготовка обращения с диагностикой:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --prepare-support-request
+```
+
 ## Сборка EXE
 
 Во время активной разработки EXE не пересобирать без явной причины. Это долго и мешает быстрым итерациям.

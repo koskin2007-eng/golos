@@ -11,6 +11,7 @@ from voice_input.diagnostics import collect_diagnostics
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
 from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
+from voice_input.support import create_support_package, open_support_package
 from voice_input.updater import UpdateInfo, check_for_update, download_update
 from voice_input.version import APP_VERSION
 
@@ -263,6 +264,7 @@ class SettingsWindow:
         ttk.Label(panel, text="Диагностика", style="Section.TLabel").pack(anchor="w", pady=(0, 12))
         ttk.Button(panel, text="Открыть лог", command=self._open_log).pack(anchor="w", pady=4)
         ttk.Button(panel, text="Собрать диагностику", style="Accent.TButton", command=self._collect_diagnostics).pack(anchor="w", pady=4)
+        ttk.Button(panel, text="Отправить диагностику", command=self._prepare_support_request).pack(anchor="w", pady=4)
 
     def _build_updates_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
@@ -397,6 +399,16 @@ class SettingsWindow:
         archive_path = collect_diagnostics(self.config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
         self.status_var.set(f"Диагностика сохранена: {archive_path.name}")
         os.startfile(str(archive_path.parent))  # noqa: S606 - Windows desktop helper.
+
+    def _prepare_support_request(self) -> None:
+        try:
+            package = create_support_package(self.config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
+            open_support_package(package)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Голос", f"Не удалось подготовить обращение: {exc}")
+            return
+        self.status_var.set(f"Диагностика готова: {package.archive_path.name}")
+        messagebox.showinfo("Голос", "Открыл GitHub и папку с архивом. Прикрепите ZIP-файл к обращению.")
 
     def _check_updates(self) -> None:
         self.update_status_var.set("Проверяю обновления...")

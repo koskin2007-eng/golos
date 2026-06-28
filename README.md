@@ -72,6 +72,14 @@
 .\.venv\Scripts\python.exe -m voice_input.app --shortcut-status
 ```
 
+Подготовить обращение в поддержку:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --prepare-support-request
+```
+
+Команда создаст безопасный diagnostic ZIP, текст обращения и откроет GitHub Issue. ZIP нужно прикрепить к обращению вручную.
+
 EXE во время активной доработки не пересобираем. Сборка нужна только перед передачей программы другому человеку или перед GitHub Release.
 
 ## 4. Как выбрать микрофон

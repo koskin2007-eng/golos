@@ -16,6 +16,7 @@ class TrayController:
         status_getter: Callable[[], str],
         on_exit: Callable[[], None],
         diagnostics_collector: Callable[[], Path] | None = None,
+        support_request_creator: Callable[[], Path] | None = None,
         settings_opener: Callable[[], None] | None = None,
     ) -> None:
         self.config_path = Path(config_path).resolve()
@@ -23,6 +24,7 @@ class TrayController:
         self.status_getter = status_getter
         self.on_exit = on_exit
         self.diagnostics_collector = diagnostics_collector
+        self.support_request_creator = support_request_creator
         self.settings_opener = settings_opener
         self._icon = None
         self._lock = threading.Lock()
@@ -48,6 +50,7 @@ class TrayController:
             pystray.MenuItem("Открыть настройки", self._open_settings),
             pystray.MenuItem("Открыть лог", lambda _icon, _item: self._open_path(self.log_path)),
             pystray.MenuItem("Собрать диагностику", self._collect_diagnostics, enabled=self.diagnostics_collector is not None),
+            pystray.MenuItem("Отправить диагностику", self._prepare_support_request, enabled=self.support_request_creator is not None),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Выход", self._exit),
         )
@@ -96,6 +99,19 @@ class TrayController:
                 self.notify("Голос: ошибка", f"Не удалось собрать диагностику: {exc}")
 
         threading.Thread(target=worker, name="collect-diagnostics", daemon=True).start()
+
+    def _prepare_support_request(self, icon, item) -> None:  # noqa: ANN001
+        if self.support_request_creator is None:
+            return
+
+        def worker() -> None:
+            try:
+                archive_path = self.support_request_creator()
+                self.notify("Голос", f"Диагностика готова: {archive_path.name}")
+            except Exception as exc:  # noqa: BLE001
+                self.notify("Голос: ошибка", f"Не удалось подготовить обращение: {exc}")
+
+        threading.Thread(target=worker, name="prepare-support-request", daemon=True).start()
 
     def _open_settings(self, icon, item) -> None:  # noqa: ANN001
         if self.settings_opener is not None:

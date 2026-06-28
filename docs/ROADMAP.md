@@ -79,8 +79,11 @@ docs/REMOTE_RELEASE_SUPPORT_PLAN.md
 Implemented first:
 
 - tray command `Собрать диагностику`;
+- tray command `Отправить диагностику`;
 - CLI command `--collect-diagnostics`;
+- CLI command `--prepare-support-request`;
 - zip output in `diagnostics/`;
+- GitHub Issue draft with diagnostic instructions;
 - includes logs, sanitized `config.yaml`, and runtime metadata;
 - excludes `.env`, temporary audio, downloaded models, and API keys.
 
