@@ -24,7 +24,8 @@ Runtime:
 - local listen address: `127.0.0.1:8765`
 - public proxy: nginx HTTPS on `golos.msgcrm.ru`
 - token source: `GOLOS_SUPPORT_TOKEN` in the server env file
-- admin token source: `GOLOS_ADMIN_TOKEN` in the server env file
+- admin login source: `GOLOS_ADMIN_USERNAME` in the server env file, default `admin`
+- admin password source: `GOLOS_ADMIN_PASSWORD`, or `GOLOS_ADMIN_TOKEN` if a separate password is not set
 
 Production checks:
 
@@ -45,7 +46,8 @@ cd /opt/golos-support
 ./.venv/bin/python -m support_server.cli show REPORT_ID
 ```
 
-The HTML admin page is available from the app at `/admin/diagnostics`, but public nginx access to `/admin` must stay blocked. Use an SSH tunnel to `127.0.0.1:8765` when browser access is needed.
+The public landing page is available at `/`.
+The HTML admin page is available at `/admin/login` and requires the admin username and password before diagnostics are shown.
 
 Do not commit server env files, support tokens, diagnostic archives, SQLite data, SSH keys, or production backups.
 

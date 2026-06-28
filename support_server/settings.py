@@ -10,6 +10,8 @@ class ServerSettings:
     data_dir: Path
     support_token: str
     admin_token: str
+    admin_username: str
+    admin_password: str
     max_upload_bytes: int
     public_latest_json_url: str
     update_json_path: Path
@@ -26,6 +28,8 @@ def load_settings() -> ServerSettings:
         data_dir=data_dir,
         support_token=os.getenv("GOLOS_SUPPORT_TOKEN", ""),
         admin_token=os.getenv("GOLOS_ADMIN_TOKEN", ""),
+        admin_username=os.getenv("GOLOS_ADMIN_USERNAME", "admin"),
+        admin_password=os.getenv("GOLOS_ADMIN_PASSWORD", ""),
         max_upload_bytes=int(os.getenv("GOLOS_MAX_UPLOAD_MB", "25")) * 1024 * 1024,
         public_latest_json_url=public_latest_json_url,
         update_json_path=update_json_path,
