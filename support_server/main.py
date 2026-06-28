@@ -77,7 +77,9 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         limit: int = 50,
         golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
     ):
-        _require_admin(server_settings, golos_admin_token)
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
         reports = list_diagnostic_reports(server_settings, limit=limit)
         return HTMLResponse(_diagnostics_list_html(reports, limit))
 
@@ -86,7 +88,9 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         report_id: str,
         golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
     ):
-        _require_admin(server_settings, golos_admin_token)
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
         report = get_diagnostic_report(server_settings, report_id)
         if report is None:
             raise HTTPException(status_code=404, detail="Diagnostic report not found.")
@@ -97,7 +101,9 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         report_id: str,
         golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
     ):
-        _require_admin(server_settings, golos_admin_token)
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
         report = get_diagnostic_report(server_settings, report_id)
         if report is None:
             raise HTTPException(status_code=404, detail="Diagnostic report not found.")
@@ -185,6 +191,13 @@ def _require_admin(settings: ServerSettings, token: str | None) -> None:
     _ensure_admin_enabled(settings)
     if not _is_admin_authorized(settings, token):
         raise HTTPException(status_code=401, detail="Unauthorized.")
+
+
+def _redirect_to_login_if_admin_needed(settings: ServerSettings, token: str | None):
+    _ensure_admin_enabled(settings)
+    if _is_admin_authorized(settings, token):
+        return None
+    return RedirectResponse("/admin/login", status_code=303)
 
 
 def _is_admin_authorized(settings: ServerSettings, token: str | None) -> bool:
