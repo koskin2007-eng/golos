@@ -362,12 +362,12 @@ class SettingsWindow:
 
     def _recognition_model_text(self, profile: str) -> str:
         if profile == "openai":
-            return f"Через интернет с помощью OpenAI: {self.openai_model_var.get()}. Модель выбрана программой и не редактируется здесь."
+            return f"Через интернет с помощью OpenAI: {self.openai_model_var.get()}."
         return f"{LOCAL_MODEL_NAMES.get(profile, 'Локальная модель')}. Работает на вашем Windows-компьютере без отправки аудио в интернет."
 
     def _correction_model_text(self, enabled: bool) -> str:
         if enabled:
-            return f"GPT исправляет готовый текст: {self.text_correction_model_var.get()}. Модель выбрана программой и не редактируется здесь."
+            return f"GPT исправляет готовый текст: {self.text_correction_model_var.get()}."
         return "Не используется. Текст вставляется сразу после распознавания."
 
 
