@@ -40,6 +40,7 @@ from voice_input.version import APP_NAME, APP_VERSION
 RECORD_START_BEEP_HZ = 900
 RECORD_STOP_BEEP_HZ = 520
 RECORD_BEEP_DURATION_MS = 80
+MIN_RECORD_SECONDS = 0.35
 RESTART_DELAY_MS = 1200
 
 
@@ -57,6 +58,10 @@ def load_dotenv_file() -> None:
         load_dotenv(default_env_path())
     except ImportError:
         return
+
+
+def _recording_is_too_short(recording: RecordingResult) -> bool:
+    return recording.frame_count <= 0 or recording.duration_seconds < MIN_RECORD_SECONDS
 
 
 class VoiceInputApp:
@@ -268,6 +273,18 @@ class VoiceInputApp:
             self.set_status("ошибка записи")
             self.logger.exception("Recording stop failed")
             self._notify("Голос: ошибка", str(exc))
+            return
+
+        if _recording_is_too_short(recording):
+            self.logger.info(
+                "Recording ignored because it is too short record_seconds=%.2f frames=%s wav=%s",
+                recording.duration_seconds,
+                recording.frame_count,
+                recording.wav_path,
+            )
+            self.set_status("готов")
+            with self._state_lock:
+                self._processing = False
             return
 
         threading.Thread(
