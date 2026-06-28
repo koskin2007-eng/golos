@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 
 from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, deep_merge
 from voice_input.diagnostics import collect_diagnostics
+from voice_input.env_file import OPENAI_API_KEY_NAME, default_env_path, env_value_exists, normalize_openai_api_key, set_env_value
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
 from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
@@ -89,6 +90,8 @@ class SettingsWindow:
         self.profile_var = tk.StringVar(value=self._profile_label(str(self.config.get("recognition_profile") or "base")))
         self.language_var = tk.StringVar(value=self._label_for_language(str(self.config.get("language") or "ru")))
         self.openai_model_var = tk.StringVar(value=str((self.config.get("openai") or {}).get("model") or "gpt-4o-mini-transcribe"))
+        self.openai_key_var = tk.StringVar(value="")
+        self.openai_key_status_var = tk.StringVar(value=self._openai_key_status_text())
         text_correction = self.config.get("text_correction") or {}
         self.text_correction_enabled_var = tk.BooleanVar(value=bool(text_correction.get("enabled", False)))
         self.text_correction_model_var = tk.StringVar(value=str(text_correction.get("model") or "gpt-5.4-mini"))
@@ -246,6 +249,19 @@ class SettingsWindow:
         correction_value = self._readonly_value_label(panel, self.correction_model_info_var, wraplength=540)
         self._field(panel, 4, "Исправление", correction_value)
 
+        openai_key_box = ttk.Frame(panel, style="Panel.TFrame")
+        ttk.Entry(openai_key_box, textvariable=self.openai_key_var, show="*", width=46).pack(side="left", fill="x", expand=True)
+        ttk.Button(openai_key_box, text="Очистить поле", command=lambda: self.openai_key_var.set("")).pack(side="left", padx=(8, 0))
+        self._field(panel, 5, "OpenAI API-ключ", openai_key_box)
+        tk.Label(
+            panel,
+            textvariable=self.openai_key_status_var,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=6, column=1, sticky="w", pady=(0, 8))
+
         info = tk.Label(
             panel,
             textvariable=self.profile_info_var,
@@ -254,7 +270,7 @@ class SettingsWindow:
             justify="left",
             wraplength=590,
         )
-        info.grid(row=5, column=1, sticky="w", pady=(10, 0))
+        info.grid(row=7, column=1, sticky="w", pady=(10, 0))
         panel.columnconfigure(1, weight=1)
         profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_recognition_profile_ui())
         self._refresh_recognition_profile_ui()
@@ -339,6 +355,7 @@ class SettingsWindow:
         profile = self._profile_id_from_label(self.profile_var.get())
         language = LANGUAGE_OPTIONS.get(self.language_var.get(), "ru")
         openai_model = self.openai_model_var.get().strip()
+        openai_key = normalize_openai_api_key(self.openai_key_var.get())
         text_correction_model = self.text_correction_model_var.get().strip()
 
         if not hotkey:
@@ -356,6 +373,18 @@ class SettingsWindow:
         if self.text_correction_enabled_var.get() and not text_correction_model:
             messagebox.showerror("Голос", "Укажите модель исправления.")
             return
+        if (profile == "openai" or self.text_correction_enabled_var.get()) and not (openai_key or self._openai_key_exists()):
+            messagebox.showerror("Голос", "Для OpenAI-режима вставьте API-ключ OpenAI на вкладке распознавания.")
+            return
+
+        try:
+            openai_key_saved = self._save_openai_key_if_needed(openai_key)
+        except ValueError as exc:
+            messagebox.showerror("Голос", str(exc))
+            return
+        except OSError as exc:
+            messagebox.showerror("Голос", f"Не удалось сохранить OpenAI API-ключ: {exc}")
+            return
 
         raw = self.config_manager._read_yaml_mapping()
         raw["hotkey"] = hotkey
@@ -369,8 +398,13 @@ class SettingsWindow:
 
         self.config_manager._write_yaml_mapping(raw)
         self._apply_shortcuts()
+        if openai_key_saved:
+            self.openai_key_status_var.set(self._openai_key_status_text())
         self.status_var.set("Сохранено. Для применения горячей клавиши и профиля перезапустите Голос.")
-        messagebox.showinfo("Голос", "Настройки сохранены.")
+        message = "Настройки сохранены."
+        if openai_key_saved:
+            message += "\n\nOpenAI API-ключ сохранён локально на этом компьютере."
+        messagebox.showinfo("Голос", message)
 
     def _apply_shortcuts(self) -> None:
         try:
@@ -387,6 +421,28 @@ class SettingsWindow:
         start_menu = "есть в меню Пуск" if status.start_menu_exists else "ярлык в меню Пуск будет создан при сохранении"
         startup = "автозапуск включён" if status.startup_exists else "автозапуск выключен"
         return f"{start_menu}; {startup}."
+
+    def _openai_key_exists(self) -> bool:
+        return env_value_exists(default_env_path(), OPENAI_API_KEY_NAME) or bool(os.getenv(OPENAI_API_KEY_NAME))
+
+    def _openai_key_status_text(self) -> str:
+        if env_value_exists(default_env_path(), OPENAI_API_KEY_NAME):
+            return "Ключ OpenAI сохранён локально. Чтобы заменить его, вставьте новый ключ и нажмите «Сохранить»."
+        if os.getenv(OPENAI_API_KEY_NAME):
+            return "Ключ OpenAI найден в переменных Windows. Можно вставить новый ключ, чтобы сохранить его локально."
+        return "Ключ OpenAI не сохранён. Вставьте ключ сюда и нажмите «Сохранить»."
+
+    def _save_openai_key_if_needed(self, openai_key: str) -> bool:
+        if not openai_key:
+            return False
+        if any(ch.isspace() for ch in openai_key):
+            raise ValueError("OpenAI API-ключ не должен содержать пробелы или переносы строк.")
+        if len(openai_key) < 20:
+            raise ValueError("OpenAI API-ключ выглядит слишком коротким. Проверьте, что ключ скопирован полностью.")
+        set_env_value(default_env_path(), OPENAI_API_KEY_NAME, openai_key)
+        os.environ[OPENAI_API_KEY_NAME] = openai_key
+        self.openai_key_var.set("")
+        return True
 
     def _open_log(self) -> None:
         path = resolve_runtime_path(DEFAULT_LOG_PATH)

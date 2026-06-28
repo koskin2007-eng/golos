@@ -15,6 +15,7 @@ from pathlib import Path
 
 from voice_input.config import AppConfig, ConfigManager
 from voice_input.diagnostics import collect_diagnostics
+from voice_input.env_file import default_env_path
 from voice_input.logger import DEFAULT_LOG_PATH, setup_logging
 from voice_input.hotkey import PushToTalkHotkey
 from voice_input.paste import TextPaster
@@ -37,7 +38,7 @@ def load_dotenv_file() -> None:
     try:
         from dotenv import load_dotenv
 
-        load_dotenv()
+        load_dotenv(default_env_path())
     except ImportError:
         return
 
