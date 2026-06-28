@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import sqlite3
 import urllib.request
 import zipfile
@@ -44,6 +45,22 @@ class DiagnosticReport:
     notes: str
 
 
+@dataclass(slots=True)
+class PremiumLicense:
+    license_id: str
+    key_prefix: str
+    created_at: str
+    updated_at: str
+    label: str
+    notes: str
+    active: bool
+    balance_seconds: int
+    total_granted_seconds: int
+    total_used_seconds: int
+    total_amount_rub: int
+    last_seen_at: str
+
+
 def init_storage(settings: ServerSettings) -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     diagnostics_dir(settings).mkdir(parents=True, exist_ok=True)
@@ -79,6 +96,41 @@ def init_storage(settings: ServerSettings) -> None:
                     event_type TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     remote_addr TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS premium_licenses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    license_id TEXT NOT NULL UNIQUE,
+                    key_hash TEXT NOT NULL UNIQUE,
+                    key_prefix TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    notes TEXT NOT NULL,
+                    active INTEGER NOT NULL,
+                    balance_seconds INTEGER NOT NULL,
+                    total_granted_seconds INTEGER NOT NULL,
+                    total_used_seconds INTEGER NOT NULL,
+                    total_amount_rub INTEGER NOT NULL,
+                    last_seen_at TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS premium_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entry_id TEXT NOT NULL UNIQUE,
+                    license_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    entry_type TEXT NOT NULL,
+                    seconds_delta INTEGER NOT NULL,
+                    amount_rub INTEGER NOT NULL,
+                    note TEXT NOT NULL,
+                    FOREIGN KEY (license_id) REFERENCES premium_licenses (license_id)
                 )
                 """
             )
@@ -118,6 +170,169 @@ def get_diagnostic_report(settings: ServerSettings, report_id: str) -> Diagnosti
     if row is None:
         return None
     return _diagnostic_report_from_row(row)
+
+
+def create_premium_license(
+    settings: ServerSettings,
+    label: str,
+    minutes: int,
+    amount_rub: int = 0,
+    notes: str = "",
+) -> tuple[str, PremiumLicense]:
+    minutes = max(0, int(minutes))
+    amount_rub = max(0, int(amount_rub))
+    license_key = _new_premium_key()
+    license_id = uuid4().hex
+    created_at = _utc_now()
+    seconds = minutes * 60
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                INSERT INTO premium_licenses (
+                    license_id, key_hash, key_prefix, created_at, updated_at, label, notes,
+                    active, balance_seconds, total_granted_seconds, total_used_seconds,
+                    total_amount_rub, last_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, '')
+                """,
+                (
+                    license_id,
+                    premium_key_hash(license_key),
+                    license_key[:14],
+                    created_at,
+                    created_at,
+                    label.strip(),
+                    notes.strip(),
+                    seconds,
+                    seconds,
+                    amount_rub,
+                ),
+            )
+            _insert_premium_ledger(db, license_id, "create", seconds, amount_rub, notes.strip())
+    license = get_premium_license(settings, license_id)
+    if license is None:
+        raise RuntimeError("Premium license was not created.")
+    return license_key, license
+
+
+def list_premium_licenses(settings: ServerSettings, limit: int = 50) -> list[PremiumLicense]:
+    limit = max(1, min(limit, 200))
+    with closing(_connect(settings)) as db:
+        rows = db.execute(
+            """
+            SELECT license_id, key_prefix, created_at, updated_at, label, notes, active,
+                   balance_seconds, total_granted_seconds, total_used_seconds,
+                   total_amount_rub, last_seen_at
+            FROM premium_licenses
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_premium_license_from_row(row) for row in rows]
+
+
+def get_premium_license(settings: ServerSettings, identifier: str) -> PremiumLicense | None:
+    identifier = identifier.strip()
+    if not identifier:
+        return None
+    where = "license_id = ?"
+    value = identifier
+    if identifier.startswith("golos_"):
+        where = "key_hash = ?"
+        value = premium_key_hash(identifier)
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            f"""
+            SELECT license_id, key_prefix, created_at, updated_at, label, notes, active,
+                   balance_seconds, total_granted_seconds, total_used_seconds,
+                   total_amount_rub, last_seen_at
+            FROM premium_licenses
+            WHERE {where}
+            """,
+            (value,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _premium_license_from_row(row)
+
+
+def grant_premium_minutes(
+    settings: ServerSettings,
+    identifier: str,
+    minutes: int,
+    amount_rub: int = 0,
+    notes: str = "",
+) -> PremiumLicense:
+    license = get_premium_license(settings, identifier)
+    if license is None:
+        raise ValueError("Premium license not found.")
+    seconds = max(0, int(minutes)) * 60
+    amount_rub = max(0, int(amount_rub))
+    updated_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE premium_licenses
+                SET updated_at = ?,
+                    balance_seconds = balance_seconds + ?,
+                    total_granted_seconds = total_granted_seconds + ?,
+                    total_amount_rub = total_amount_rub + ?
+                WHERE license_id = ?
+                """,
+                (updated_at, seconds, seconds, amount_rub, license.license_id),
+            )
+            _insert_premium_ledger(db, license.license_id, "grant", seconds, amount_rub, notes.strip())
+    updated = get_premium_license(settings, license.license_id)
+    if updated is None:
+        raise RuntimeError("Premium license disappeared after grant.")
+    return updated
+
+
+def set_premium_license_active(settings: ServerSettings, identifier: str, active: bool) -> PremiumLicense:
+    license = get_premium_license(settings, identifier)
+    if license is None:
+        raise ValueError("Premium license not found.")
+    updated_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE premium_licenses
+                SET updated_at = ?, active = ?
+                WHERE license_id = ?
+                """,
+                (updated_at, 1 if active else 0, license.license_id),
+            )
+            _insert_premium_ledger(db, license.license_id, "activate" if active else "deactivate", 0, 0, "")
+    updated = get_premium_license(settings, license.license_id)
+    if updated is None:
+        raise RuntimeError("Premium license disappeared after status change.")
+    return updated
+
+
+def touch_premium_license(settings: ServerSettings, license_key: str) -> PremiumLicense | None:
+    license = get_premium_license(settings, license_key)
+    if license is None:
+        return None
+    seen_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE premium_licenses
+                SET last_seen_at = ?
+                WHERE license_id = ?
+                """,
+                (seen_at, license.license_id),
+            )
+    return get_premium_license(settings, license.license_id)
+
+
+def premium_key_hash(license_key: str) -> str:
+    return hashlib.sha256(license_key.strip().encode("utf-8")).hexdigest()
 
 
 def resolve_report_archive(settings: ServerSettings, report: DiagnosticReport) -> Path:
@@ -268,3 +483,47 @@ def _diagnostic_report_from_row(row: tuple[object, ...]) -> DiagnosticReport:
         sha256=str(row[10]),
         notes=str(row[11]),
     )
+
+
+def _premium_license_from_row(row: tuple[object, ...]) -> PremiumLicense:
+    return PremiumLicense(
+        license_id=str(row[0]),
+        key_prefix=str(row[1]),
+        created_at=str(row[2]),
+        updated_at=str(row[3]),
+        label=str(row[4]),
+        notes=str(row[5]),
+        active=bool(row[6]),
+        balance_seconds=int(row[7]),
+        total_granted_seconds=int(row[8]),
+        total_used_seconds=int(row[9]),
+        total_amount_rub=int(row[10]),
+        last_seen_at=str(row[11]),
+    )
+
+
+def _insert_premium_ledger(
+    db: sqlite3.Connection,
+    license_id: str,
+    entry_type: str,
+    seconds_delta: int,
+    amount_rub: int,
+    note: str,
+) -> None:
+    db.execute(
+        """
+        INSERT INTO premium_ledger (
+            entry_id, license_id, created_at, entry_type, seconds_delta, amount_rub, note
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (uuid4().hex, license_id, _utc_now(), entry_type, seconds_delta, amount_rub, note),
+    )
+
+
+def _new_premium_key() -> str:
+    return f"golos_{secrets.token_urlsafe(24)}"
+
+
+def _utc_now() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"

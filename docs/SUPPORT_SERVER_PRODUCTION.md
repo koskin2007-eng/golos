@@ -69,6 +69,28 @@ https://golos.msgcrm.ru/admin/login
 Use `GOLOS_ADMIN_USERNAME` and the configured admin password from `/etc/golos-support/golos-support.env`.
 Do not send these values in chat or commit them.
 
+## Manual Premium MVP
+
+Admin page:
+
+```text
+https://golos.msgcrm.ru/admin/premium
+```
+
+Create a 100 RUB manual package:
+
+```bash
+cd /opt/golos-support
+./.venv/bin/python -m support_server.cli premium create --label "Client name" --minutes 180 --amount-rub 100
+```
+
+List and top up:
+
+```bash
+./.venv/bin/python -m support_server.cli premium list
+./.venv/bin/python -m support_server.cli premium grant LICENSE_ID --minutes 180 --amount-rub 100
+```
+
 ## Desktop Connection
 
 Local desktop config:

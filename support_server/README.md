@@ -46,8 +46,17 @@ cd /opt/golos-support
 ./.venv/bin/python -m support_server.cli show REPORT_ID
 ```
 
+Manual premium MVP:
+
+```bash
+cd /opt/golos-support
+./.venv/bin/python -m support_server.cli premium create --label "Client name" --minutes 180 --amount-rub 100
+./.venv/bin/python -m support_server.cli premium list
+./.venv/bin/python -m support_server.cli premium grant LICENSE_ID --minutes 180 --amount-rub 100
+```
+
 The public landing page is available at `/`.
-The HTML admin page is available at `/admin/login` and requires the admin username and password before diagnostics are shown.
+The HTML admin page is available at `/admin/login` and requires the admin username and password before diagnostics or premium keys are shown.
 
 Do not commit server env files, support tokens, diagnostic archives, SQLite data, SSH keys, or production backups.
 

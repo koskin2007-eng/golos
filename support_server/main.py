@@ -9,13 +9,20 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from support_server.settings import ServerSettings, load_settings
 from support_server.storage import (
     DiagnosticReport,
+    PremiumLicense,
+    create_premium_license,
     get_diagnostic_report,
+    get_premium_license,
+    grant_premium_minutes,
     init_storage,
     list_diagnostic_reports,
+    list_premium_licenses,
     load_update_payload,
     record_event,
     resolve_report_archive,
     save_diagnostic_report,
+    set_premium_license_active,
+    touch_premium_license,
 )
 from voice_input.version import APP_VERSION as DESKTOP_APP_VERSION
 from voice_input.version import GITHUB_REPOSITORY
@@ -131,6 +138,92 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             media_type="application/zip",
             filename=archive_path.name,
         )
+
+    @app.get("/admin/premium", response_class=HTMLResponse)
+    def admin_premium(
+        limit: int = 50,
+        golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    ):
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
+        licenses = list_premium_licenses(server_settings, limit=limit)
+        return HTMLResponse(_premium_admin_html(licenses, limit))
+
+    @app.post("/admin/premium/create", response_class=HTMLResponse)
+    def admin_premium_create(
+        label: str = Form(""),
+        minutes: int = Form(180),
+        amount_rub: int = Form(100),
+        notes: str = Form(""),
+        golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    ):
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
+        if not label.strip():
+            licenses = list_premium_licenses(server_settings)
+            return HTMLResponse(_premium_admin_html(licenses, error="Укажите имя клиента или комментарий."), status_code=400)
+        if minutes <= 0:
+            licenses = list_premium_licenses(server_settings)
+            return HTMLResponse(_premium_admin_html(licenses, error="Количество минут должно быть больше нуля."), status_code=400)
+        license_key, _license = create_premium_license(server_settings, label, minutes, amount_rub, notes)
+        licenses = list_premium_licenses(server_settings)
+        return HTMLResponse(
+            _premium_admin_html(
+                licenses,
+                created_key=license_key,
+                message="Премиум-ключ создан. Скопируйте его клиенту сейчас: повторно ключ не показывается.",
+            )
+        )
+
+    @app.post("/admin/premium/grant", response_class=HTMLResponse)
+    def admin_premium_grant(
+        identifier: str = Form(""),
+        minutes: int = Form(180),
+        amount_rub: int = Form(100),
+        notes: str = Form(""),
+        golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    ):
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
+        if minutes <= 0:
+            licenses = list_premium_licenses(server_settings)
+            return HTMLResponse(_premium_admin_html(licenses, error="Количество минут должно быть больше нуля."), status_code=400)
+        try:
+            grant_premium_minutes(server_settings, identifier, minutes, amount_rub, notes)
+        except ValueError as exc:
+            licenses = list_premium_licenses(server_settings)
+            return HTMLResponse(_premium_admin_html(licenses, error=str(exc)), status_code=404)
+        licenses = list_premium_licenses(server_settings)
+        return HTMLResponse(_premium_admin_html(licenses, message="Баланс премиум-ключа пополнен."))
+
+    @app.post("/admin/premium/status", response_class=HTMLResponse)
+    def admin_premium_status(
+        identifier: str = Form(""),
+        active: str = Form("yes"),
+        golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    ):
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
+        try:
+            set_premium_license_active(server_settings, identifier, active == "yes")
+        except ValueError as exc:
+            licenses = list_premium_licenses(server_settings)
+            return HTMLResponse(_premium_admin_html(licenses, error=str(exc)), status_code=404)
+        licenses = list_premium_licenses(server_settings)
+        return HTMLResponse(_premium_admin_html(licenses, message="Статус премиум-ключа обновлён."))
+
+    @app.get("/api/premium/balance")
+    def premium_balance(x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key")) -> dict[str, object]:
+        if not x_golos_premium_key:
+            raise HTTPException(status_code=401, detail="Premium key is required.")
+        license = touch_premium_license(server_settings, x_golos_premium_key)
+        if license is None or not license.active:
+            raise HTTPException(status_code=401, detail="Premium key is invalid.")
+        return _premium_license_payload(license)
 
     @app.post("/api/events")
     async def events(
@@ -453,6 +546,8 @@ def _admin_layout(title: str, body: str, show_logout: bool = True) -> str:
     body {{ margin:0; font-family:Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--ink); }}
     header {{ background:#164e2e; color:#fff; padding:18px 28px; display:flex; align-items:center; justify-content:space-between; }}
     header h1 {{ font-size:22px; margin:0; }}
+    header nav {{ margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; }}
+    header nav a {{ color:#d9f99d; font-size:14px; }}
     main {{ padding:24px 28px; }}
     table {{ width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); }}
     th, td {{ padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; font-size:14px; }}
@@ -462,16 +557,24 @@ def _admin_layout(title: str, body: str, show_logout: bool = True) -> str:
     .panel {{ background:var(--panel); border:1px solid var(--line); padding:18px; max-width:760px; }}
     .button, button {{ background:var(--green); color:#fff; border:1px solid #0f6630; padding:9px 14px; font-weight:700; cursor:pointer; }}
     input {{ width:100%; max-width:520px; padding:10px; border:1px solid var(--line); font-size:15px; }}
+    textarea {{ width:100%; max-width:520px; min-height:72px; padding:10px; border:1px solid var(--line); font-size:15px; font-family:inherit; }}
     code {{ background:#eef7e7; padding:2px 5px; }}
     dl {{ display:grid; grid-template-columns:180px 1fr; gap:8px 14px; }}
     dt {{ color:var(--muted); }}
     dd {{ margin:0; overflow-wrap:anywhere; }}
     .error {{ background:#fff2f2; border:1px solid #f3b7b7; padding:10px 12px; margin-bottom:14px; }}
+    .success {{ background:#ecfff1; border:1px solid #a7dfb2; padding:10px 12px; margin-bottom:14px; }}
+    .keybox {{ background:#0b1f16; color:#d9f99d; padding:12px; margin:10px 0 16px; overflow-wrap:anywhere; font-size:15px; }}
+    .forms {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:18px; }}
+    .forms .panel {{ max-width:none; }}
   </style>
 </head>
 <body>
   <header>
-    <h1>Golos Admin</h1>
+    <div>
+      <h1>Golos Admin</h1>
+      <nav><a href="/admin/diagnostics">Диагностика</a><a href="/admin/premium">Премиум</a><a href="/">Лендинг</a></nav>
+    </div>
     {logout_html}
   </header>
   <main>{body}</main>
@@ -550,6 +653,102 @@ def _diagnostic_detail_html(report: DiagnosticReport) -> str:
 </section>
 """
     return _admin_layout("Diagnostic detail", body)
+
+
+def _premium_admin_html(
+    licenses: list[PremiumLicense],
+    limit: int = 50,
+    created_key: str = "",
+    message: str = "",
+    error: str = "",
+) -> str:
+    rows = "\n".join(_premium_license_row(license) for license in licenses)
+    if not rows:
+        rows = '<tr><td colspan="8" class="muted">Премиум-ключей пока нет.</td></tr>'
+    message_html = f'<div class="success">{escape(message)}</div>' if message else ""
+    error_html = f'<div class="error">{escape(error)}</div>' if error else ""
+    key_html = f'<div class="keybox"><strong>{escape(created_key)}</strong></div>' if created_key else ""
+    body = f"""
+<h2>Премиум-ключи</h2>
+<p class="muted">Ручной MVP монетизации: клиент оплатил 100 рублей, мы создаём ключ и начисляем пакет минут.</p>
+{message_html}
+{error_html}
+{key_html}
+<div class="forms">
+  <section class="panel">
+    <h3>Создать ключ</h3>
+    <form method="post" action="/admin/premium/create">
+      <p><input type="text" name="label" placeholder="Клиент или комментарий" required></p>
+      <p><input type="number" name="minutes" value="180" min="1" step="1" placeholder="Минуты"></p>
+      <p><input type="number" name="amount_rub" value="100" min="0" step="1" placeholder="Оплата, рублей"></p>
+      <p><textarea name="notes" placeholder="Заметка: перевод, дата, контакт"></textarea></p>
+      <p><button type="submit">Создать и начислить</button></p>
+    </form>
+  </section>
+  <section class="panel">
+    <h3>Пополнить ключ</h3>
+    <form method="post" action="/admin/premium/grant">
+      <p><input type="text" name="identifier" placeholder="License ID или полный ключ" required></p>
+      <p><input type="number" name="minutes" value="180" min="1" step="1" placeholder="Минуты"></p>
+      <p><input type="number" name="amount_rub" value="100" min="0" step="1" placeholder="Оплата, рублей"></p>
+      <p><textarea name="notes" placeholder="Заметка о пополнении"></textarea></p>
+      <p><button type="submit">Пополнить</button></p>
+    </form>
+  </section>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Создан</th><th>License ID</th><th>Клиент</th><th>Статус</th>
+      <th>Баланс</th><th>Начислено</th><th>Оплата</th><th>Действие</th>
+    </tr>
+  </thead>
+  <tbody>{rows}</tbody>
+</table>
+<p class="muted">Показаны последние {int(limit)} ключей. Сам ключ хранится только у клиента; в базе виден префикс и хэш.</p>
+"""
+    return _admin_layout("Premium", body)
+
+
+def _premium_license_row(license: PremiumLicense) -> str:
+    active_text = "активен" if license.active else "выключен"
+    next_active = "no" if license.active else "yes"
+    button_text = "Выключить" if license.active else "Включить"
+    return f"""
+<tr>
+  <td>{escape(license.created_at)}</td>
+  <td><code>{escape(license.license_id)}</code><br><span class="muted">{escape(license.key_prefix)}...</span></td>
+  <td>{escape(license.label)}<br><span class="muted">{escape(license.notes)}</span></td>
+  <td>{active_text}</td>
+  <td>{_format_minutes(license.balance_seconds)}</td>
+  <td>{_format_minutes(license.total_granted_seconds)}</td>
+  <td>{int(license.total_amount_rub)} руб.</td>
+  <td>
+    <form method="post" action="/admin/premium/status">
+      <input type="hidden" name="identifier" value="{escape(license.license_id)}">
+      <input type="hidden" name="active" value="{next_active}">
+      <button type="submit">{button_text}</button>
+    </form>
+  </td>
+</tr>"""
+
+
+def _premium_license_payload(license: PremiumLicense) -> dict[str, object]:
+    return {
+        "ok": True,
+        "active": license.active,
+        "license_id": license.license_id,
+        "key_prefix": license.key_prefix,
+        "balance_seconds": license.balance_seconds,
+        "balance_minutes": round(license.balance_seconds / 60, 2),
+        "total_granted_minutes": round(license.total_granted_seconds / 60, 2),
+        "total_used_minutes": round(license.total_used_seconds / 60, 2),
+        "last_seen_at": license.last_seen_at,
+    }
+
+
+def _format_minutes(seconds: int) -> str:
+    return f"{seconds / 60:.1f} мин."
 
 
 def _format_bytes(size_bytes: int) -> str:
