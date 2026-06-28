@@ -34,10 +34,22 @@ LANGUAGE_OPTIONS = {
 
 
 PROFILE_HELP_TEXT = {
-    "base": "База: локальное распознавание на этом компьютере. Базовые настройки, нормальный баланс скорости и качества. OpenAI для аудио не используется.",
-    "small": "Смолл: локальное распознавание на этом компьютере. Медленнее базы, но обычно качественнее распознаёт русский текст.",
-    "tiny": "Тини: локальное распознавание на этом компьютере. Самый быстрый вариант, но качество распознавания заметно хуже.",
-    "openai": "OpenAI: распознавание через интернет с помощью GPT-модели. Обычно лучше для сложной диктовки, но требует ключ OpenAI и интернет.",
+    "base": (
+        "База: распознавание выполняется на вашем компьютере локальной моделью. "
+        "Аудио не отправляется в интернет. Это базовые настройки с нормальным балансом скорости и качества."
+    ),
+    "small": (
+        "Смолл: распознавание выполняется на вашем компьютере локальной моделью. "
+        "Работает медленнее базы, но обычно качественнее распознаёт русский текст."
+    ),
+    "tiny": (
+        "Тини: распознавание выполняется на вашем компьютере локальной моделью. "
+        "Это самый быстрый вариант, но качество распознавания заметно хуже."
+    ),
+    "openai": (
+        "OpenAI: аудио отправляется через интернет в OpenAI и распознаётся GPT-моделью. "
+        "Обычно лучше подходит для сложной диктовки, но требует ключ OpenAI и интернет."
+    ),
 }
 
 PROFILE_LABELS = {
@@ -49,6 +61,12 @@ PROFILE_LABELS = {
 
 PROFILE_ORDER = ("base", "small", "tiny", "openai")
 
+LOCAL_MODEL_NAMES = {
+    "base": "Локальная модель Whisper base",
+    "small": "Локальная модель Whisper small",
+    "tiny": "Локальная модель Whisper tiny",
+}
+
 
 class SettingsWindow:
     def __init__(self, config_path: str | Path = "config.yaml") -> None:
@@ -58,8 +76,8 @@ class SettingsWindow:
 
         self.root = tk.Tk()
         self.root.title("Голос - настройки")
-        self.root.geometry("880x620")
-        self.root.minsize(760, 560)
+        self.root.geometry("900x740")
+        self.root.minsize(820, 700)
         self.root.configure(bg=COLORS["bg"])
 
         self.hotkey_var = tk.StringVar(value=str(self.config.get("hotkey") or "F8"))
@@ -73,6 +91,8 @@ class SettingsWindow:
         self.autostart_var = tk.BooleanVar(value=bool((self.config.get("startup") or {}).get("run_on_windows_startup", False)))
         self.status_var = tk.StringVar(value="Настройки загружены")
         self.profile_info_var = tk.StringVar()
+        self.recognition_model_info_var = tk.StringVar()
+        self.correction_model_info_var = tk.StringVar()
 
         self._configure_styles()
         self._build()
@@ -93,10 +113,18 @@ class SettingsWindow:
         style.configure("Heading.TLabel", background=COLORS["bg"], foreground=COLORS["ink"], font=("Segoe UI", 18, "bold"))
         style.configure("Section.TLabel", background=COLORS["panel"], foreground=COLORS["ink"], font=("Segoe UI", 13, "bold"))
         style.configure("Panel.TLabel", background=COLORS["panel"], foreground=COLORS["ink"], font=("Segoe UI", 10))
-        style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=(14, 8), background=COLORS["yellow_soft"])
-        style.map("TButton", background=[("active", COLORS["yellow"]), ("pressed", COLORS["yellow"])])
+        style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=(14, 8), background=COLORS["yellow_soft"], foreground=COLORS["ink"])
+        style.map(
+            "TButton",
+            background=[("active", COLORS["yellow"]), ("pressed", COLORS["yellow"])],
+            foreground=[("active", COLORS["ink"]), ("pressed", COLORS["ink"]), ("disabled", COLORS["muted"])],
+        )
         style.configure("Accent.TButton", background=COLORS["green"], foreground="white")
-        style.map("Accent.TButton", background=[("active", COLORS["green_dark"]), ("pressed", COLORS["green_dark"])])
+        style.map(
+            "Accent.TButton",
+            background=[("active", COLORS["green_dark"]), ("pressed", COLORS["green_dark"])],
+            foreground=[("active", "white"), ("pressed", "white"), ("disabled", "#d8ead8")],
+        )
         style.configure("TNotebook", background=COLORS["bg"], borderwidth=0)
         style.configure("TNotebook.Tab", padding=(18, 10), font=("Segoe UI", 10, "bold"))
         style.map("TNotebook.Tab", background=[("selected", COLORS["green"])], foreground=[("selected", "white")])
@@ -186,8 +214,8 @@ class SettingsWindow:
         profile_combo = ttk.Combobox(panel, textvariable=self.profile_var, values=profiles, state="readonly", width=46)
         self._field(panel, 1, "Профиль", profile_combo)
 
-        self.openai_model_entry = ttk.Entry(panel, textvariable=self.openai_model_var, width=32)
-        self.openai_model_label = self._field(panel, 2, "Модель распознавания OpenAI", self.openai_model_entry)
+        recognition_value = self._readonly_value_label(panel, self.recognition_model_info_var, wraplength=540)
+        self._field(panel, 2, "Распознавание", recognition_value)
 
         self.text_correction_check = ttk.Checkbutton(
             panel,
@@ -195,9 +223,9 @@ class SettingsWindow:
             variable=self.text_correction_enabled_var,
             command=self._refresh_recognition_profile_ui,
         )
-        self.text_correction_check.grid(row=3, column=1, sticky="w", pady=8)
-        self.text_correction_model_entry = ttk.Entry(panel, textvariable=self.text_correction_model_var, width=32)
-        self._field(panel, 4, "Модель исправления", self.text_correction_model_entry)
+        self.text_correction_check.grid(row=3, column=1, sticky="w", pady=(10, 8))
+        correction_value = self._readonly_value_label(panel, self.correction_model_info_var, wraplength=540)
+        self._field(panel, 4, "Исправление", correction_value)
 
         info = tk.Label(
             panel,
@@ -205,7 +233,7 @@ class SettingsWindow:
             bg=COLORS["panel"],
             fg=COLORS["muted"],
             justify="left",
-            wraplength=560,
+            wraplength=590,
         )
         info.grid(row=5, column=1, sticky="w", pady=(10, 0))
         panel.columnconfigure(1, weight=1)
@@ -237,22 +265,30 @@ class SettingsWindow:
         widget.grid(row=row, column=1, sticky="w", pady=8)
         return label_widget
 
+    def _readonly_value_label(self, parent: ttk.Frame, textvariable: tk.StringVar, wraplength: int) -> tk.Label:
+        return tk.Label(
+            parent,
+            textvariable=textvariable,
+            bg=COLORS["soft"],
+            fg=COLORS["ink"],
+            justify="left",
+            anchor="w",
+            padx=12,
+            pady=8,
+            wraplength=wraplength,
+            font=("Segoe UI", 10),
+        )
+
     def _refresh_recognition_profile_ui(self) -> None:
         profile = self._profile_id_from_label(self.profile_var.get())
-        is_openai_profile = profile == "openai"
         correction_enabled = bool(self.text_correction_enabled_var.get())
 
-        if hasattr(self, "openai_model_label"):
-            label = "Модель распознавания OpenAI" if is_openai_profile else "Модель OpenAI (не используется)"
-            self.openai_model_label.configure(text=label)
-        if hasattr(self, "openai_model_entry"):
-            self.openai_model_entry.state(["!disabled"] if is_openai_profile else ["disabled"])
-        if hasattr(self, "text_correction_model_entry"):
-            self.text_correction_model_entry.state(["!disabled"] if correction_enabled else ["disabled"])
+        self.recognition_model_info_var.set(self._recognition_model_text(profile))
+        self.correction_model_info_var.set(self._correction_model_text(correction_enabled))
 
         help_text = PROFILE_HELP_TEXT.get(profile, "Выберите профиль распознавания.")
         if correction_enabled:
-            help_text += " Включена отдельная GPT-правка уже распознанного текста перед вставкой."
+            help_text += " После распознавания текст дополнительно отправляется в GPT для исправления очевидных ошибок."
         self.profile_info_var.set(help_text)
 
     def _save(self) -> None:
@@ -323,6 +359,16 @@ class SettingsWindow:
     def _profile_id_from_label(self, label: str) -> str:
         reverse = {display: profile for profile, display in PROFILE_LABELS.items()}
         return reverse.get(label.strip(), label.strip())
+
+    def _recognition_model_text(self, profile: str) -> str:
+        if profile == "openai":
+            return f"Через интернет с помощью OpenAI: {self.openai_model_var.get()}. Модель выбрана программой и не редактируется здесь."
+        return f"{LOCAL_MODEL_NAMES.get(profile, 'Локальная модель')}. Работает на вашем Windows-компьютере без отправки аудио в интернет."
+
+    def _correction_model_text(self, enabled: bool) -> str:
+        if enabled:
+            return f"GPT исправляет готовый текст: {self.text_correction_model_var.get()}. Модель выбрана программой и не редактируется здесь."
+        return "Не используется. Текст вставляется сразу после распознавания."
 
 
 def open_settings_window(config_path: str | Path = "config.yaml") -> None:
