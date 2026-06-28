@@ -45,6 +45,8 @@ profiles:
       vad_filter: true
   openai:
     backend: "openai"
+  premium:
+    backend: "premium_proxy"
 
 audio:
   sample_rate: 16000
@@ -68,6 +70,11 @@ local_quality:
 openai:
   model: "gpt-4o-mini-transcribe"
   response_format: "text"
+
+premium:
+  server_url: "https://golos.msgcrm.ru"
+  license_key_env: "GOLOS_PREMIUM_KEY"
+  model: "gpt-4o-mini-transcribe"
 
 text_correction:
   enabled: false
@@ -136,6 +143,9 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
         "openai": {
             "backend": "openai",
         },
+        "premium": {
+            "backend": "premium_proxy",
+        },
     },
     "audio": {
         "sample_rate": 16000,
@@ -159,6 +169,11 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "openai": {
         "model": "gpt-4o-mini-transcribe",
         "response_format": "text",
+    },
+    "premium": {
+        "server_url": "https://golos.msgcrm.ru",
+        "license_key_env": "GOLOS_PREMIUM_KEY",
+        "model": "gpt-4o-mini-transcribe",
     },
     "text_correction": {
         "enabled": False,
@@ -212,6 +227,13 @@ class OpenAISettings:
 
 
 @dataclass(slots=True)
+class PremiumSettings:
+    server_url: str = "https://golos.msgcrm.ru"
+    license_key_env: str = "GOLOS_PREMIUM_KEY"
+    model: str = "gpt-4o-mini-transcribe"
+
+
+@dataclass(slots=True)
 class TextCorrectionSettings:
     enabled: bool = False
     model: str = "gpt-5.4-mini"
@@ -262,6 +284,7 @@ class AppConfig:
     local_fast: LocalWhisperSettings
     local_quality: LocalWhisperSettings
     openai: OpenAISettings
+    premium: PremiumSettings
     text_correction: TextCorrectionSettings
     paste: PasteSettings
     feedback: FeedbackSettings
@@ -297,7 +320,7 @@ def apply_recognition_profile(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(selected, dict):
         raise ValueError(f"Profile {profile_name!r} must be a mapping.")
 
-    allowed_keys = {"backend", "local_fast", "local_quality", "openai"}
+    allowed_keys = {"backend", "local_fast", "local_quality", "openai", "premium"}
     overrides = {key: value for key, value in selected.items() if key in allowed_keys}
     return deep_merge(data, overrides)
 
@@ -313,6 +336,7 @@ def build_config(data: dict[str, Any]) -> AppConfig:
         local_fast=LocalWhisperSettings(**data["local_fast"]),
         local_quality=LocalWhisperSettings(**data["local_quality"]),
         openai=OpenAISettings(**data["openai"]),
+        premium=PremiumSettings(**data["premium"]),
         text_correction=TextCorrectionSettings(**data["text_correction"]),
         paste=PasteSettings(**data["paste"]),
         feedback=FeedbackSettings(**data["feedback"]),

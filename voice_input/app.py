@@ -22,7 +22,9 @@ from voice_input.logger import DEFAULT_LOG_PATH, setup_logging
 from voice_input.hotkey import PushToTalkHotkey
 from voice_input.paste import TextPaster
 from voice_input.paths import resolve_runtime_path, runtime_base_dir
+from voice_input.premium import premium_key_from_env
 from voice_input.recorder import AudioRecorder, RecordingResult
+from voice_input.remote_actions import complete_remote_action, fetch_remote_actions
 from voice_input.restart import clear_restart_request, restart_request_path
 from voice_input.shortcuts import install_shortcuts, remove_shortcuts, shortcut_status, sync_shortcuts
 from voice_input.single_instance import SingleInstanceGuard
@@ -32,6 +34,7 @@ from voice_input.text_corrector import OpenAITextCorrector
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
+from voice_input.transcribers.premium_proxy_transcriber import PremiumProxyTranscriber
 from voice_input.updater import (
     check_for_update,
     clear_update_install_request,
@@ -48,6 +51,8 @@ RECORD_STOP_BEEP_HZ = 520
 RECORD_BEEP_DURATION_MS = 80
 MIN_RECORD_SECONDS = 0.35
 RESTART_DELAY_MS = 1200
+REMOTE_ACTION_INITIAL_DELAY_SECONDS = 10
+REMOTE_ACTION_POLL_SECONDS = 300
 
 
 _WINDOWS_RESTART_SCRIPT = r"""
@@ -128,6 +133,7 @@ class VoiceInputApp:
         self.hotkey.start()
         self._start_restart_request_watcher()
         self._start_update_install_request_watcher()
+        self._start_remote_action_watcher()
         if self.config.performance.preload_model:
             self._preload_local_backend()
         else:
@@ -219,6 +225,74 @@ class VoiceInputApp:
 
         threading.Thread(target=worker, name="update-install-request-watcher", daemon=True).start()
 
+    def _start_remote_action_watcher(self) -> None:
+        if not self.config.premium.server_url.strip() or not premium_key_from_env(self.config.premium):
+            return
+
+        def worker() -> None:
+            if self._stop_event.wait(REMOTE_ACTION_INITIAL_DELAY_SECONDS):
+                return
+            while not self._stop_event.is_set():
+                try:
+                    actions = fetch_remote_actions(self.config.premium)
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning("Could not fetch remote support actions: %s", exc)
+                    if self._stop_event.wait(REMOTE_ACTION_POLL_SECONDS):
+                        return
+                    continue
+
+                for action in actions:
+                    if self._stop_event.is_set():
+                        return
+                    try:
+                        self._handle_remote_action(action.action_id, action.action_type, action.message)
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.warning("Could not handle remote action %s: %s", action.action_id, exc)
+
+                if self._stop_event.wait(REMOTE_ACTION_POLL_SECONDS):
+                    return
+
+        threading.Thread(target=worker, name="remote-action-watcher", daemon=True).start()
+
+    def _handle_remote_action(self, action_id: str, action_type: str, message: str) -> None:
+        if action_type == "diagnostics_request":
+            question = message or "Поддержка Голос просит отправить диагностику для разбора ошибки. Отправить сейчас?"
+            if not self._ask_user_confirmation("Голос: запрос поддержки", question):
+                complete_remote_action(self.config.premium, action_id, "declined", "Пользователь отказался отправлять диагностику.")
+                return
+            try:
+                archive_path = self.prepare_support_request()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.exception("Remote diagnostics request failed")
+                complete_remote_action(self.config.premium, action_id, "error", str(exc))
+                self._notify("Голос: ошибка", f"Не удалось отправить диагностику: {exc}")
+                return
+            complete_remote_action(self.config.premium, action_id, "done", f"Диагностика отправлена: {archive_path.name}")
+            return
+
+        if action_type == "update_suggestion":
+            self._notify("Голос", message or "Поддержка предлагает проверить обновления Голос.")
+            complete_remote_action(self.config.premium, action_id, "seen", "Пользователь получил уведомление об обновлении.")
+            return
+
+        complete_remote_action(self.config.premium, action_id, "error", f"Unsupported action type: {action_type}")
+
+    def _ask_user_confirmation(self, title: str, message: str) -> bool:
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            result = messagebox.askyesno(title, message, parent=root)
+            root.destroy()
+            return bool(result)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Could not show confirmation dialog: %s", exc)
+            self._notify(title, message)
+            return False
+
     def _load_dotenv(self) -> None:
         load_dotenv_file()
 
@@ -236,6 +310,12 @@ class VoiceInputApp:
             )
         elif backend == "openai":
             self.logger.info("Backend selected backend=openai model=%s api_key_present=%s", self.config.openai.model, bool(os.getenv("OPENAI_API_KEY")))
+        elif backend == "premium_proxy":
+            self.logger.info(
+                "Backend selected backend=premium_proxy server=%s license_key_present=%s",
+                self.config.premium.server_url,
+                bool(premium_key_from_env(self.config.premium)),
+            )
         else:
             self.logger.warning("Unknown backend in config backend=%s", backend)
 
@@ -380,6 +460,10 @@ class VoiceInputApp:
             self.logger.error("OPENAI_API_KEY is not set; falling back to local_fast")
             self._notify("Голос", "OPENAI_API_KEY не найден. Использую local_fast.")
             backend = "local_fast"
+        if backend == "premium_proxy" and not PremiumProxyTranscriber.has_license_key(self.config.premium):
+            self.logger.error("GOLOS_PREMIUM_KEY is not set; falling back to local_fast")
+            self._notify("Голос", "Премиум-ключ Голос не найден. Использую local_fast.")
+            backend = "local_fast"
         return self._get_transcriber(backend)
 
     def _correct_text_if_needed(self, text: str) -> tuple[str, float]:
@@ -427,6 +511,12 @@ class VoiceInputApp:
                 self._transcribers[key] = OpenAITranscriber(self.config.openai, self.config.language, self.logger)
             return self._transcribers[key]
 
+        if backend == "premium_proxy":
+            key = (backend, self.config.premium.server_url, self.config.premium.model, self.config.premium.license_key_env)
+            if key not in self._transcribers:
+                self._transcribers[key] = PremiumProxyTranscriber(self.config.premium, self.config.language, self.logger)
+            return self._transcribers[key]
+
         raise ValueError(f"Unknown backend: {backend}")
 
     def _notify(self, title: str, message: str) -> None:
@@ -441,12 +531,16 @@ class VoiceInputApp:
     def prepare_support_request(self) -> Path:
         package = create_support_package(self.config_manager.path, self.log_path)
         server_url = self.config.support.server_url.strip()
+        premium_key = premium_key_from_env(self.config.premium)
+        if not server_url and premium_key:
+            server_url = self.config.premium.server_url.strip()
         if server_url:
             result = upload_support_package(
                 package,
                 server_url,
                 support_token_from_env(self.config.support.token_env),
                 metadata={"profile": self.config.recognition_profile, "backend": self.config.backend},
+                premium_key=premium_key,
             )
             self.logger.info("Support diagnostics uploaded report_id=%s message=%s", result.report_id, result.message)
             self._notify("Голос", result.message)

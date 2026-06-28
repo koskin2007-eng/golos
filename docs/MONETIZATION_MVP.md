@@ -14,7 +14,7 @@ Paid:
 
 - "Голос Премиум" through our server;
 - the user enters a Golos premium license key instead of an OpenAI key;
-- our server checks the license balance and later will proxy OpenAI transcription;
+- our server checks the license balance and proxies OpenAI transcription;
 - balance is shown to the user in minutes, not tokens.
 
 ## Starter Tariff
@@ -34,7 +34,8 @@ The public user-facing unit is "minutes". Token and OpenAI-cost accounting stays
 3. Admin sends the key to the user once.
 4. User enters the key in the desktop app premium settings.
 5. The app checks the balance through the server.
-6. Later, premium transcription requests are charged against the minute balance.
+6. Premium transcription requests are charged against the minute balance.
+7. Support can request diagnostics through a safe client action; the user still confirms before anything is sent.
 
 ## Admin CLI
 
@@ -73,11 +74,19 @@ https://golos.msgcrm.ru/admin/premium
 
 The created license key is shown only once. Store only the hash and a short prefix in SQLite.
 
+## Implemented MVP
+
+- Desktop profile `premium` uses the Golos support server instead of a user OpenAI key.
+- Desktop settings can save `GOLOS_PREMIUM_KEY` locally and check remaining minutes.
+- Server endpoint `POST /api/premium/transcribe` calls OpenAI with the server key and charges seconds from the premium balance.
+- Server endpoint `GET /api/premium/balance` shows active status and remaining minutes.
+- Premium key can authorize diagnostics upload to `/api/diagnostics`.
+- Admin can queue safe client actions: diagnostics request or update suggestion.
+
 ## Next Stages
 
-1. Add desktop UI for entering a Golos premium license key.
-2. Add client balance check and display remaining minutes.
-3. Add server-side OpenAI transcription proxy.
-4. Add usage ledger and minute charging after each transcription.
-5. Add automatic payments and payment webhook.
-6. Add user-visible payment page and receipts/legal documents.
+1. Deploy the new server code and set server-side `OPENAI_API_KEY`.
+2. Test one real premium transcription on a paid key.
+3. Add automatic payments and payment webhook.
+4. Add user-visible payment page and receipts/legal documents.
+5. Add rate limits and anti-abuse rules before public promotion.

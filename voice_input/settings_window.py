@@ -6,11 +6,19 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, deep_merge
+from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, PremiumSettings, deep_merge
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.env_file import OPENAI_API_KEY_NAME, default_env_path, env_value_exists, normalize_openai_api_key, set_env_value
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
+from voice_input.premium import (
+    PREMIUM_KEY_NAME,
+    check_premium_balance,
+    normalize_premium_key,
+    premium_env_value_exists,
+    premium_key_from_env,
+)
+from voice_input.remote_actions import complete_remote_action, fetch_remote_actions
 from voice_input.restart import write_restart_request
 from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
 from voice_input.support import create_support_package, open_support_package, support_token_from_env, upload_support_package
@@ -57,6 +65,10 @@ PROFILE_HELP_TEXT = {
         "OpenAI: аудио отправляется через интернет в OpenAI и распознаётся GPT-моделью. "
         "Обычно лучше подходит для сложной диктовки, но требует ключ OpenAI и интернет."
     ),
+    "premium": (
+        "Премиум: аудио отправляется через интернет на сервер Голос, а сервер распознаёт его через OpenAI. "
+        "Подходит для пользователей без собственного OpenAI API-ключа."
+    ),
 }
 
 PROFILE_LABELS = {
@@ -64,9 +76,10 @@ PROFILE_LABELS = {
     "small": "Смолл - локально, медленнее, качественнее",
     "tiny": "Тини - локально, быстро, качество хуже",
     "openai": "OpenAI - через интернет, с помощью GPT",
+    "premium": "Премиум Голос - через наш сервер",
 }
 
-PROFILE_ORDER = ("base", "small", "tiny", "openai")
+PROFILE_ORDER = ("base", "small", "tiny", "openai", "premium")
 
 LOCAL_MODEL_NAMES = {
     "base": "Локальная модель Whisper base",
@@ -93,6 +106,11 @@ class SettingsWindow:
         self.openai_model_var = tk.StringVar(value=str((self.config.get("openai") or {}).get("model") or "gpt-4o-mini-transcribe"))
         self.openai_key_var = tk.StringVar(value="")
         self.openai_key_status_var = tk.StringVar(value=self._openai_key_status_text())
+        premium = self.config.get("premium") or {}
+        self.premium_server_url_var = tk.StringVar(value=str(premium.get("server_url") or "https://golos.msgcrm.ru"))
+        self.premium_key_var = tk.StringVar(value="")
+        self.premium_key_status_var = tk.StringVar(value=self._premium_key_status_text())
+        self.premium_balance_var = tk.StringVar(value="Баланс не проверялся.")
         text_correction = self.config.get("text_correction") or {}
         self.text_correction_enabled_var = tk.BooleanVar(value=bool(text_correction.get("enabled", False)))
         self.text_correction_model_var = tk.StringVar(value=str(text_correction.get("model") or "gpt-5.4-mini"))
@@ -105,6 +123,9 @@ class SettingsWindow:
         self.update_status_var = tk.StringVar(value="Обновления ещё не проверялись.")
         self.update_detail_var = tk.StringVar(value="")
         self.shortcut_status_var = tk.StringVar(value=self._shortcut_status_text())
+        support = self.config.get("support") or {}
+        self.support_server_url_var = tk.StringVar(value=str(support.get("server_url") or ""))
+        self.support_status_var = tk.StringVar(value=self._support_status_text())
         self.latest_update_info: UpdateInfo | None = None
         self.download_update_button: ttk.Button | None = None
 
@@ -265,6 +286,31 @@ class SettingsWindow:
             wraplength=590,
         ).grid(row=6, column=1, sticky="w", pady=(0, 8))
 
+        premium_server_box = ttk.Entry(panel, textvariable=self.premium_server_url_var, width=46)
+        self._field(panel, 7, "Сервер Премиум", premium_server_box)
+
+        premium_key_box = ttk.Frame(panel, style="Panel.TFrame")
+        ttk.Entry(premium_key_box, textvariable=self.premium_key_var, show="*", width=34).pack(side="left", fill="x", expand=True)
+        ttk.Button(premium_key_box, text="Очистить поле", command=lambda: self.premium_key_var.set("")).pack(side="left", padx=(8, 0))
+        ttk.Button(premium_key_box, text="Проверить баланс", command=self._check_premium_balance).pack(side="left", padx=(8, 0))
+        self._field(panel, 8, "Премиум-ключ Голос", premium_key_box)
+        tk.Label(
+            panel,
+            textvariable=self.premium_key_status_var,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=9, column=1, sticky="w", pady=(0, 4))
+        tk.Label(
+            panel,
+            textvariable=self.premium_balance_var,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=10, column=1, sticky="w", pady=(0, 8))
+
         info = tk.Label(
             panel,
             textvariable=self.profile_info_var,
@@ -273,17 +319,36 @@ class SettingsWindow:
             justify="left",
             wraplength=590,
         )
-        info.grid(row=7, column=1, sticky="w", pady=(10, 0))
+        info.grid(row=11, column=1, sticky="w", pady=(10, 0))
         panel.columnconfigure(1, weight=1)
         profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_recognition_profile_ui())
         self._refresh_recognition_profile_ui()
 
     def _build_diagnostics_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
-        ttk.Label(panel, text="Диагностика", style="Section.TLabel").pack(anchor="w", pady=(0, 12))
-        ttk.Button(panel, text="Открыть лог", command=self._open_log).pack(anchor="w", pady=4)
-        ttk.Button(panel, text="Собрать диагностику", style="Accent.TButton", command=self._collect_diagnostics).pack(anchor="w", pady=4)
-        ttk.Button(panel, text="Отправить диагностику", command=self._prepare_support_request).pack(anchor="w", pady=4)
+        ttk.Label(panel, text="Диагностика", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        self._field(
+            panel,
+            1,
+            "Сервер поддержки",
+            ttk.Entry(panel, textvariable=self.support_server_url_var, width=54),
+        )
+        tk.Label(
+            panel,
+            textvariable=self.support_status_var,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=2, column=1, sticky="w", pady=(0, 12))
+
+        buttons = ttk.Frame(panel, style="Panel.TFrame")
+        buttons.grid(row=3, column=1, sticky="w", pady=(4, 0))
+        ttk.Button(buttons, text="Открыть лог", command=self._open_log).pack(side="left")
+        ttk.Button(buttons, text="Собрать диагностику", style="Accent.TButton", command=self._collect_diagnostics).pack(side="left", padx=(10, 0))
+        ttk.Button(buttons, text="Отправить диагностику", command=self._prepare_support_request).pack(side="left", padx=(10, 0))
+        ttk.Button(buttons, text="Проверить запросы поддержки", command=self._check_support_actions).pack(side="left", padx=(10, 0))
+        panel.columnconfigure(1, weight=1)
 
     def _build_updates_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
@@ -359,6 +424,7 @@ class SettingsWindow:
         language = LANGUAGE_OPTIONS.get(self.language_var.get(), "ru")
         openai_model = self.openai_model_var.get().strip()
         openai_key = normalize_openai_api_key(self.openai_key_var.get())
+        premium_key = normalize_premium_key(self.premium_key_var.get(), PREMIUM_KEY_NAME)
         text_correction_model = self.text_correction_model_var.get().strip()
 
         if not hotkey:
@@ -373,20 +439,27 @@ class SettingsWindow:
         if profile == "openai" and not openai_model:
             messagebox.showerror("Голос", "Укажите модель распознавания GPT.")
             return
+        if profile == "premium" and not self.premium_server_url_var.get().strip():
+            messagebox.showerror("Голос", "Укажите сервер Голос Премиум.")
+            return
         if self.text_correction_enabled_var.get() and not text_correction_model:
             messagebox.showerror("Голос", "Укажите модель исправления.")
             return
         if (profile == "openai" or self.text_correction_enabled_var.get()) and not (openai_key or self._openai_key_exists()):
             messagebox.showerror("Голос", "Для OpenAI-режима вставьте API-ключ OpenAI на вкладке распознавания.")
             return
+        if profile == "premium" and not (premium_key or self._premium_key_exists()):
+            messagebox.showerror("Голос", "Для премиум-режима вставьте премиум-ключ Голос.")
+            return
 
         try:
             openai_key_saved = self._save_openai_key_if_needed(openai_key)
+            premium_key_saved = self._save_premium_key_if_needed(premium_key)
         except ValueError as exc:
             messagebox.showerror("Голос", str(exc))
             return
         except OSError as exc:
-            messagebox.showerror("Голос", f"Не удалось сохранить OpenAI API-ключ: {exc}")
+            messagebox.showerror("Голос", f"Не удалось сохранить ключ: {exc}")
             return
 
         raw = self.config_manager._read_yaml_mapping()
@@ -394,19 +467,30 @@ class SettingsWindow:
         raw["language"] = language
         raw["recognition_profile"] = profile
         raw.setdefault("openai", {})["model"] = openai_model
+        raw.setdefault("premium", {})["server_url"] = self.premium_server_url_var.get().strip()
+        raw.setdefault("premium", {})["license_key_env"] = PREMIUM_KEY_NAME
         raw.setdefault("text_correction", {})["enabled"] = bool(self.text_correction_enabled_var.get())
         raw.setdefault("text_correction", {})["model"] = text_correction_model
         raw.setdefault("feedback", {})["beep_on_recording"] = bool(self.beep_var.get())
         raw.setdefault("startup", {})["run_on_windows_startup"] = bool(self.autostart_var.get())
+        raw.setdefault("support", {})["server_url"] = self.support_server_url_var.get().strip()
+        raw.setdefault("support", {})["token_env"] = str((self.config.get("support") or {}).get("token_env") or "GOLOS_SUPPORT_TOKEN")
 
         self.config_manager._write_yaml_mapping(raw)
+        self.raw_config = raw
+        self.config = deep_merge(DEFAULT_CONFIG_DATA, raw)
         self._apply_shortcuts()
+        self.support_status_var.set(self._support_status_text())
         if openai_key_saved:
             self.openai_key_status_var.set(self._openai_key_status_text())
+        if premium_key_saved:
+            self.premium_key_status_var.set(self._premium_key_status_text())
         self.status_var.set("Сохранено. Для применения горячей клавиши и профиля перезапустите Голос.")
         message = "Настройки сохранены."
         if openai_key_saved:
             message += "\n\nOpenAI API-ключ сохранён локально на этом компьютере."
+        if premium_key_saved:
+            message += "\n\nПремиум-ключ Голос сохранён локально на этом компьютере."
         messagebox.showinfo("Голос", message)
 
     def _apply_shortcuts(self) -> None:
@@ -446,6 +530,12 @@ class SettingsWindow:
         startup = "автозапуск включён" if status.startup_exists else "автозапуск выключен"
         return f"{start_menu}; {startup}."
 
+    def _support_status_text(self) -> str:
+        server_url = self.support_server_url_var.get().strip() if hasattr(self, "support_server_url_var") else ""
+        if server_url:
+            return "Кнопка «Отправить диагностику» отправит безопасный архив на этот сервер. Аудио, модели и ключи не входят в архив."
+        return "Если сервер не указан, кнопка откроет GitHub-обращение и папку с ZIP-архивом для ручной отправки."
+
     def _openai_key_exists(self) -> bool:
         return env_value_exists(default_env_path(), OPENAI_API_KEY_NAME) or bool(os.getenv(OPENAI_API_KEY_NAME))
 
@@ -468,6 +558,52 @@ class SettingsWindow:
         self.openai_key_var.set("")
         return True
 
+    def _premium_key_exists(self) -> bool:
+        return premium_env_value_exists(self._premium_settings_from_ui())
+
+    def _premium_key_status_text(self) -> str:
+        if premium_env_value_exists(self._premium_settings_from_ui()):
+            return "Премиум-ключ Голос сохранён локально. Чтобы заменить его, вставьте новый ключ и нажмите «Сохранить»."
+        return "Премиум-ключ не сохранён. Его можно получить после оплаты пакета минут и вставить сюда."
+
+    def _save_premium_key_if_needed(self, premium_key: str) -> bool:
+        if not premium_key:
+            return False
+        if any(ch.isspace() for ch in premium_key):
+            raise ValueError("Премиум-ключ не должен содержать пробелы или переносы строк.")
+        if len(premium_key) < 20:
+            raise ValueError("Премиум-ключ выглядит слишком коротким. Проверьте, что ключ скопирован полностью.")
+        set_env_value(default_env_path(), PREMIUM_KEY_NAME, premium_key)
+        os.environ[PREMIUM_KEY_NAME] = premium_key
+        self.premium_key_var.set("")
+        return True
+
+    def _check_premium_balance(self) -> None:
+        self.premium_balance_var.set("Проверяю баланс...")
+
+        def worker() -> None:
+            try:
+                balance = check_premium_balance(self._premium_settings_from_ui())
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self.premium_balance_var.set(f"Не удалось проверить баланс: {exc}"))
+                return
+            self.root.after(
+                0,
+                lambda: self.premium_balance_var.set(
+                    f"Осталось {balance.balance_minutes:.1f} мин. Начислено {balance.total_granted_minutes:.1f} мин."
+                ),
+            )
+
+        threading.Thread(target=worker, name="check-premium-balance", daemon=True).start()
+
+    def _premium_settings_from_ui(self) -> PremiumSettings:
+        premium = self.config.get("premium") or {}
+        return PremiumSettings(
+            server_url=self.premium_server_url_var.get().strip() or str(premium.get("server_url") or "https://golos.msgcrm.ru"),
+            license_key_env=PREMIUM_KEY_NAME,
+            model=str(premium.get("model") or "gpt-4o-mini-transcribe"),
+        )
+
     def _open_log(self) -> None:
         path = resolve_runtime_path(DEFAULT_LOG_PATH)
         if path.exists():
@@ -484,7 +620,10 @@ class SettingsWindow:
         try:
             package = create_support_package(self.config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
             support = self.config.get("support") or {}
-            server_url = str(support.get("server_url") or "").strip()
+            server_url = self.support_server_url_var.get().strip() or str(support.get("server_url") or "").strip()
+            premium_key = premium_key_from_env(self._premium_settings_from_ui())
+            if not server_url and premium_key:
+                server_url = self._premium_settings_from_ui().server_url
             if server_url:
                 result = upload_support_package(
                     package,
@@ -494,6 +633,7 @@ class SettingsWindow:
                         "profile": str(self.config.get("recognition_profile") or ""),
                         "backend": str(self.config.get("backend") or ""),
                     },
+                    premium_key=premium_key,
                 )
                 message = result.message
             else:
@@ -504,6 +644,53 @@ class SettingsWindow:
             return
         self.status_var.set(f"Диагностика готова: {package.archive_path.name}")
         messagebox.showinfo("Голос", message)
+
+    def _check_support_actions(self) -> None:
+        self.status_var.set("Проверяю запросы поддержки...")
+
+        def worker() -> None:
+            try:
+                actions = fetch_remote_actions(self._premium_settings_from_ui())
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: messagebox.showerror("Голос", f"Не удалось проверить запросы поддержки: {exc}"))
+                self.root.after(0, lambda: self.status_var.set("Не удалось проверить запросы поддержки."))
+                return
+            self.root.after(0, lambda: self._show_support_actions(actions))
+
+        threading.Thread(target=worker, name="check-support-actions", daemon=True).start()
+
+    def _show_support_actions(self, actions) -> None:  # noqa: ANN001
+        if not actions:
+            self.status_var.set("Запросов поддержки нет.")
+            messagebox.showinfo("Голос", "Запросов поддержки нет.")
+            return
+
+        for action in actions:
+            if action.action_type == "diagnostics_request":
+                question = action.message or "Поддержка Голос просит отправить диагностику. Отправить сейчас?"
+                if not messagebox.askyesno("Голос: запрос поддержки", question):
+                    complete_remote_action(self._premium_settings_from_ui(), action.action_id, "declined", "Пользователь отказался отправлять диагностику.")
+                    continue
+                try:
+                    package = create_support_package(self.config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
+                    result = upload_support_package(
+                        package,
+                        self._premium_settings_from_ui().server_url,
+                        premium_key=premium_key_from_env(self._premium_settings_from_ui()),
+                        metadata={
+                            "profile": str(self.config.get("recognition_profile") or ""),
+                            "backend": str(self.config.get("backend") or ""),
+                        },
+                    )
+                    complete_remote_action(self._premium_settings_from_ui(), action.action_id, "done", f"Диагностика отправлена: {result.report_id}")
+                    messagebox.showinfo("Голос", result.message)
+                except Exception as exc:  # noqa: BLE001
+                    complete_remote_action(self._premium_settings_from_ui(), action.action_id, "error", str(exc))
+                    messagebox.showerror("Голос", f"Не удалось отправить диагностику: {exc}")
+            elif action.action_type == "update_suggestion":
+                messagebox.showinfo("Голос", action.message or "Поддержка предлагает проверить обновления Голос.")
+                complete_remote_action(self._premium_settings_from_ui(), action.action_id, "seen", "Пользователь увидел уведомление.")
+        self.status_var.set("Запросы поддержки обработаны.")
 
     def _check_updates(self) -> None:
         self.update_status_var.set("Проверяю обновления...")
@@ -590,6 +777,8 @@ class SettingsWindow:
     def _recognition_model_text(self, profile: str) -> str:
         if profile == "openai":
             return f"Через интернет с помощью OpenAI: {self.openai_model_var.get()}."
+        if profile == "premium":
+            return f"Через сервер Голос Премиум: {self.premium_server_url_var.get()}."
         return f"{LOCAL_MODEL_NAMES.get(profile, 'Локальная модель')}. Работает на вашем Windows-компьютере без отправки аудио в интернет."
 
     def _correction_model_text(self, enabled: bool) -> str:

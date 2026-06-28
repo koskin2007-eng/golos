@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import math
+import os
+import tempfile
+import time
+import wave
 from html import escape
+from pathlib import Path
 from secrets import compare_digest
 
 from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -10,14 +16,18 @@ from support_server.settings import ServerSettings, load_settings
 from support_server.storage import (
     DiagnosticReport,
     PremiumLicense,
+    charge_premium_seconds,
+    create_client_action,
     create_premium_license,
     get_diagnostic_report,
     get_premium_license,
     grant_premium_minutes,
     init_storage,
+    list_pending_client_actions,
     list_diagnostic_reports,
     list_premium_licenses,
     load_update_payload,
+    mark_client_action,
     record_event,
     resolve_report_archive,
     save_diagnostic_report,
@@ -216,6 +226,24 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         licenses = list_premium_licenses(server_settings)
         return HTMLResponse(_premium_admin_html(licenses, message="Статус премиум-ключа обновлён."))
 
+    @app.post("/admin/premium/action", response_class=HTMLResponse)
+    def admin_premium_action(
+        identifier: str = Form(""),
+        action_type: str = Form("diagnostics_request"),
+        message: str = Form(""),
+        golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    ):
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect:
+            return redirect
+        try:
+            create_client_action(server_settings, identifier, action_type, message)
+        except ValueError as exc:
+            licenses = list_premium_licenses(server_settings)
+            return HTMLResponse(_premium_admin_html(licenses, error=str(exc)), status_code=400)
+        licenses = list_premium_licenses(server_settings)
+        return HTMLResponse(_premium_admin_html(licenses, message="Запрос для клиента поставлен в очередь."))
+
     @app.get("/api/premium/balance")
     def premium_balance(x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key")) -> dict[str, object]:
         if not x_golos_premium_key:
@@ -224,6 +252,91 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         if license is None or not license.active:
             raise HTTPException(status_code=401, detail="Premium key is invalid.")
         return _premium_license_payload(license)
+
+    @app.post("/api/premium/transcribe")
+    async def premium_transcribe(
+        file: UploadFile = File(...),
+        language: str = Form("ru"),
+        duration_seconds: str = Form("0"),
+        x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+    ) -> dict[str, object]:
+        if not x_golos_premium_key:
+            raise HTTPException(status_code=401, detail="Premium key is required.")
+        license = touch_premium_license(server_settings, x_golos_premium_key)
+        if license is None or not license.active:
+            raise HTTPException(status_code=401, detail="Premium key is invalid.")
+
+        content = await file.read(server_settings.max_upload_bytes + 1)
+        if len(content) > server_settings.max_upload_bytes:
+            raise HTTPException(status_code=400, detail="Audio file is too large.")
+
+        measured_seconds = _wav_duration_seconds(content)
+        fallback_seconds = _safe_float(duration_seconds)
+        charge_seconds = max(1, math.ceil(measured_seconds or fallback_seconds or 1.0))
+        if license.balance_seconds < charge_seconds:
+            raise HTTPException(status_code=402, detail="Premium balance is not enough.")
+
+        started = time.perf_counter()
+        text, model = _transcribe_with_openai(content, file.filename or "audio.wav", language)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        updated = charge_premium_seconds(
+            server_settings,
+            license.license_id,
+            charge_seconds,
+            f"premium_transcribe filename={file.filename or 'audio.wav'}",
+        )
+        return {
+            "ok": True,
+            "text": text,
+            "model": model,
+            "elapsed_ms": round(elapsed_ms, 1),
+            "charged_seconds": charge_seconds,
+            "balance_minutes": round(updated.balance_seconds / 60, 2),
+        }
+
+    @app.get("/api/client/actions")
+    def client_actions(x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key")) -> dict[str, object]:
+        if not x_golos_premium_key:
+            raise HTTPException(status_code=401, detail="Premium key is required.")
+        license = touch_premium_license(server_settings, x_golos_premium_key)
+        if license is None or not license.active:
+            raise HTTPException(status_code=401, detail="Premium key is invalid.")
+        actions = list_pending_client_actions(server_settings, x_golos_premium_key)
+        return {
+            "ok": True,
+            "actions": [
+                {
+                    "action_id": action.action_id,
+                    "action_type": action.action_type,
+                    "message": action.message,
+                    "created_at": action.created_at,
+                }
+                for action in actions
+            ],
+        }
+
+    @app.post("/api/client/actions/{action_id}/complete")
+    async def client_action_complete(
+        action_id: str,
+        request: Request,
+        x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+    ) -> dict[str, object]:
+        if not x_golos_premium_key:
+            raise HTTPException(status_code=401, detail="Premium key is required.")
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="JSON object expected.")
+        try:
+            action = mark_client_action(
+                server_settings,
+                action_id,
+                x_golos_premium_key,
+                str(payload.get("status") or "done"),
+                str(payload.get("message") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "action_id": action.action_id, "status": action.status}
 
     @app.post("/api/events")
     async def events(
@@ -250,8 +363,9 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         python: str = Form(""),
         notes: str = Form(""),
         authorization: str | None = Header(default=None),
+        x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
     ) -> JSONResponse:
-        _require_auth(server_settings, authorization)
+        _require_upload_auth(server_settings, authorization, x_golos_premium_key)
         content = await file.read(server_settings.max_upload_bytes + 1)
         metadata = {
             "installation_id": installation_id,
@@ -286,6 +400,82 @@ def _require_auth(settings: ServerSettings, authorization: str | None) -> None:
     expected = f"Bearer {settings.support_token}"
     if authorization != expected:
         raise HTTPException(status_code=401, detail="Unauthorized.")
+
+
+def _require_upload_auth(settings: ServerSettings, authorization: str | None, premium_key: str | None) -> None:
+    if settings.support_token:
+        expected = f"Bearer {settings.support_token}"
+        if authorization == expected:
+            return
+        if premium_key:
+            license = touch_premium_license(settings, premium_key)
+            if license is not None and license.active:
+                return
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+
+
+def _transcribe_with_openai(content: bytes, filename: str, language: str) -> tuple[str, str]:
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=503, detail="Server OpenAI API key is not configured.")
+
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="openai package is not installed on the server.") from exc
+
+    model = os.getenv("GOLOS_PREMIUM_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+    suffix = Path(filename).suffix or ".wav"
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(content)
+            temp_path = temp_file.name
+        client = OpenAI()
+        with Path(temp_path).open("rb") as audio_file:
+            params = {
+                "model": model,
+                "file": audio_file,
+                "response_format": "text",
+            }
+            if language and language != "auto":
+                params["language"] = language
+            response = client.audio.transcriptions.create(**params)
+    finally:
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    if isinstance(response, str):
+        return response, model
+    return str(getattr(response, "text", str(response))), model
+
+
+def _wav_duration_seconds(content: bytes) -> float:
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            temp_file.write(content)
+            temp_path = temp_file.name
+        with wave.open(temp_path, "rb") as audio:
+            rate = audio.getframerate() or 1
+            return audio.getnframes() / rate
+    except Exception:  # noqa: BLE001
+        return 0.0
+    finally:
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _safe_float(value: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _ensure_admin_enabled(settings: ServerSettings) -> None:
@@ -728,6 +918,18 @@ def _premium_license_row(license: PremiumLicense) -> str:
       <input type="hidden" name="identifier" value="{escape(license.license_id)}">
       <input type="hidden" name="active" value="{next_active}">
       <button type="submit">{button_text}</button>
+    </form>
+    <form method="post" action="/admin/premium/action" style="margin-top:8px">
+      <input type="hidden" name="identifier" value="{escape(license.license_id)}">
+      <input type="hidden" name="action_type" value="diagnostics_request">
+      <input type="hidden" name="message" value="Пожалуйста, отправьте диагностику Голос для разбора ошибки.">
+      <button type="submit">Запросить диагностику</button>
+    </form>
+    <form method="post" action="/admin/premium/action" style="margin-top:8px">
+      <input type="hidden" name="identifier" value="{escape(license.license_id)}">
+      <input type="hidden" name="action_type" value="update_suggestion">
+      <input type="hidden" name="message" value="Доступно служебное обновление Голос. Проверьте обновления в настройках.">
+      <button type="submit">Предложить обновление</button>
     </form>
   </td>
 </tr>"""

@@ -81,6 +81,7 @@ Implemented first:
 
 - tray command `Собрать диагностику`;
 - tray command `Отправить диагностику`;
+- settings field for support server URL;
 - CLI command `--collect-diagnostics`;
 - CLI command `--prepare-support-request`;
 - zip output in `diagnostics/`;
@@ -88,11 +89,11 @@ Implemented first:
 - includes logs, sanitized `config.yaml`, and runtime metadata;
 - excludes `.env`, temporary audio, downloaded models, and API keys.
 
-Future optional upload:
+Current optional upload:
 
 - manual attach to GitHub issue;
-- upload to a private endpoint;
-- Telegram bot upload.
+- upload to support server when `support.server_url` is configured;
+- upload by premium key for paid users without sharing the internal support token.
 
 Default should stay manual until privacy rules are agreed.
 
@@ -105,9 +106,15 @@ Current implementation:
 - `POST /api/diagnostics`;
 - `POST /api/events`;
 - `GET /api/update`;
+- `GET /api/premium/balance`;
+- `POST /api/premium/transcribe`;
+- `GET /api/client/actions`;
+- `POST /api/client/actions/{action_id}/complete`;
 - SQLite storage under `support_server/data/`;
 - optional Bearer token through `GOLOS_SUPPORT_TOKEN`;
 - desktop app can upload diagnostics when `support.server_url` is configured.
+- premium profile can transcribe through the server and charge the user's minute balance.
+- admin can queue safe support actions, limited to diagnostics request and update suggestion.
 
 ## Browser extension idea
 

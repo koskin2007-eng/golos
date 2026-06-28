@@ -68,6 +68,10 @@ Do not commit server env files, support tokens, diagnostic archives, SQLite data
 - `POST /api/diagnostics` - принимает diagnostic ZIP от приложения.
 - `POST /api/events` - принимает технические события.
 - `GET /api/update` - отдаёт `latest.json` из локального файла или проксирует публичный GitHub Release.
+- `GET /api/premium/balance` - проверяет премиум-ключ и баланс минут.
+- `POST /api/premium/transcribe` - распознаёт WAV через серверный OpenAI API и списывает секунды.
+- `GET /api/client/actions` - отдаёт безопасные запросы поддержки клиенту.
+- `POST /api/client/actions/{action_id}/complete` - закрывает запрос поддержки после действия пользователя.
 
 ## Локальный запуск
 
@@ -88,6 +92,8 @@ http://127.0.0.1:8765/health
 - `GOLOS_MAX_UPLOAD_MB` - максимальный размер diagnostic ZIP, по умолчанию `25`.
 - `GOLOS_UPDATE_JSON_PATH` - локальный `latest.json` для `/api/update`.
 - `GOLOS_PUBLIC_LATEST_JSON_URL` - публичный fallback `latest.json`.
+- `OPENAI_API_KEY` - серверный ключ OpenAI для премиум-распознавания; не нужен обычному клиенту.
+- `GOLOS_PREMIUM_TRANSCRIBE_MODEL` - модель OpenAI для премиум-распознавания, по умолчанию `gpt-4o-mini-transcribe`.
 
 ## Подключение приложения
 
@@ -107,7 +113,16 @@ GOLOS_SUPPORT_TOKEN=...
 
 Если `support.server_url` пустой, приложение продолжит открывать GitHub Issue и папку с diagnostic ZIP.
 
+Для премиум-режима приложение хранит ключ клиента локально в `.env`:
+
+```text
+GOLOS_PREMIUM_KEY=...
+```
+
+Ключ используется для `/api/premium/balance`, `/api/premium/transcribe`, безопасных client actions и загрузки диагностики без выдачи пользователю служебного `GOLOS_SUPPORT_TOKEN`.
+
 ## Безопасность
 
 Сервер отвергает diagnostic ZIP, если внутри есть `.env`, временное аудио, папки `temp/` или `models/`.
 Сам OpenAI API key не должен отправляться ни в архиве, ни отдельным полем.
+Удалённые действия ограничены безопасными запросами: попросить диагностику или предложить обновление. Сервер не умеет запускать команды Windows, читать произвольные файлы или включать микрофон.

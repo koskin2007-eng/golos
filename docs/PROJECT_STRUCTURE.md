@@ -28,7 +28,9 @@
    ├─ logger.py
    ├─ paste.py
    ├─ paths.py
+   ├─ premium.py
    ├─ recorder.py
+   ├─ remote_actions.py
    ├─ shortcuts.py
    ├─ single_instance.py
    ├─ settings_window.py
@@ -37,7 +39,8 @@
    ├─ utils.py
    └─ transcribers/
       ├─ faster_whisper_transcriber.py
-      └─ openai_transcriber.py
+      ├─ openai_transcriber.py
+      └─ premium_proxy_transcriber.py
 ```
 
 ## Root files
@@ -49,7 +52,7 @@
 - `run.ps1` - normal development/user launch without EXE rebuild.
 - `build_exe.ps1` - PyInstaller release build script.
 - `package_release.ps1` - release packager that creates `Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
-- `support_server/` - optional FastAPI server for diagnostics, events, and update metadata.
+- `support_server/` - optional FastAPI server for diagnostics, events, update metadata, premium keys, and safe support actions.
 
 ## Docs
 
@@ -81,6 +84,8 @@ These folders are local runtime output and are not committed:
 - `voice_input/settings_window.py` - user-facing settings window.
 - `voice_input/shortcuts.py` - Windows Start Menu and Startup shortcut management.
 - `voice_input/support.py` - manual GitHub support request and diagnostic package helper.
+- `voice_input/premium.py` - local premium key helpers and balance check.
+- `voice_input/remote_actions.py` - safe support action polling and completion helpers.
 - `voice_input/updater.py` - GitHub Release update check, verified package download, extraction, and Windows update installer request.
 - `voice_input/version.py` - application version, release tag, and GitHub repository id.
 - `voice_input/diagnostics.py` - safe diagnostic zip collection.
@@ -91,7 +96,7 @@ These folders are local runtime output and are not committed:
 
 ## Support server
 
-- `support_server/main.py` - FastAPI entry point with `/health`, `/api/diagnostics`, `/api/events`, and `/api/update`.
+- `support_server/main.py` - FastAPI entry point with `/health`, diagnostics, events, update metadata, premium transcription, and admin pages.
 - `support_server/settings.py` - environment-based server settings.
 - `support_server/storage.py` - SQLite and diagnostic archive storage helpers.
 - `support_server/requirements.txt` - server-only Python dependencies.
@@ -101,6 +106,7 @@ These folders are local runtime output and are not committed:
 
 - `voice_input/transcribers/faster_whisper_transcriber.py` - local `faster-whisper` backend.
 - `voice_input/transcribers/openai_transcriber.py` - optional OpenAI audio transcription backend.
+- `voice_input/transcribers/premium_proxy_transcriber.py` - Golos premium server transcription backend.
 
 ## Development flow
 

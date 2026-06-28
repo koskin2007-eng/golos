@@ -32,6 +32,8 @@ https://golos.msgcrm.ru
 - `GOLOS_SUPPORT_TOKEN` is required for diagnostic and event uploads.
 - `GOLOS_ADMIN_USERNAME` and an admin password are required for the diagnostics admin page.
 - Admin password source is `GOLOS_ADMIN_PASSWORD`, or `GOLOS_ADMIN_TOKEN` when a separate password is not set.
+- `OPENAI_API_KEY` is required on the server for premium transcription proxy.
+- `GOLOS_PREMIUM_TRANSCRIBE_MODEL` can override the premium transcription model, default `gpt-4o-mini-transcribe`.
 - Tokens and passwords are stored only in server env and local user `.env`.
 - Do not commit `.env`, server env files, diagnostic ZIP files, SQLite data, SSH keys, or production backups.
 - Diagnostic ZIP validation rejects `.env`, audio files, `temp/`, and `models/`.
@@ -91,6 +93,17 @@ List and top up:
 ./.venv/bin/python -m support_server.cli premium grant LICENSE_ID --minutes 180 --amount-rub 100
 ```
 
+Premium API:
+
+```text
+GET  /api/premium/balance
+POST /api/premium/transcribe
+GET  /api/client/actions
+POST /api/client/actions/{action_id}/complete
+```
+
+The admin page can queue safe client actions for a premium key: request diagnostics or suggest update. The desktop app still asks the user before sending diagnostics.
+
 ## Desktop Connection
 
 Local desktop config:
@@ -105,4 +118,10 @@ Local `.env` must contain:
 
 ```text
 GOLOS_SUPPORT_TOKEN=...
+```
+
+For paid users, desktop `.env` contains only:
+
+```text
+GOLOS_PREMIUM_KEY=...
 ```

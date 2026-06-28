@@ -61,6 +61,18 @@ class PremiumLicense:
     last_seen_at: str
 
 
+@dataclass(slots=True)
+class ClientAction:
+    action_id: str
+    license_id: str
+    created_at: str
+    updated_at: str
+    action_type: str
+    status: str
+    message: str
+    result_message: str
+
+
 def init_storage(settings: ServerSettings) -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     diagnostics_dir(settings).mkdir(parents=True, exist_ok=True)
@@ -130,6 +142,22 @@ def init_storage(settings: ServerSettings) -> None:
                     seconds_delta INTEGER NOT NULL,
                     amount_rub INTEGER NOT NULL,
                     note TEXT NOT NULL,
+                    FOREIGN KEY (license_id) REFERENCES premium_licenses (license_id)
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS client_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action_id TEXT NOT NULL UNIQUE,
+                    license_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    result_message TEXT NOT NULL,
                     FOREIGN KEY (license_id) REFERENCES premium_licenses (license_id)
                 )
                 """
@@ -313,6 +341,36 @@ def set_premium_license_active(settings: ServerSettings, identifier: str, active
     return updated
 
 
+def charge_premium_seconds(settings: ServerSettings, identifier: str, seconds: int, notes: str = "") -> PremiumLicense:
+    license = get_premium_license(settings, identifier)
+    if license is None:
+        raise ValueError("Premium license not found.")
+    seconds = max(1, int(seconds))
+    if license.balance_seconds < seconds:
+        raise ValueError("Premium license balance is not enough.")
+
+    updated_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            cursor = db.execute(
+                """
+                UPDATE premium_licenses
+                SET updated_at = ?,
+                    balance_seconds = balance_seconds - ?,
+                    total_used_seconds = total_used_seconds + ?
+                WHERE license_id = ? AND balance_seconds >= ?
+                """,
+                (updated_at, seconds, seconds, license.license_id, seconds),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Premium license balance is not enough.")
+            _insert_premium_ledger(db, license.license_id, "use", -seconds, 0, notes.strip())
+    updated = get_premium_license(settings, license.license_id)
+    if updated is None:
+        raise RuntimeError("Premium license disappeared after charge.")
+    return updated
+
+
 def touch_premium_license(settings: ServerSettings, license_key: str) -> PremiumLicense | None:
     license = get_premium_license(settings, license_key)
     if license is None:
@@ -329,6 +387,98 @@ def touch_premium_license(settings: ServerSettings, license_key: str) -> Premium
                 (seen_at, license.license_id),
             )
     return get_premium_license(settings, license.license_id)
+
+
+def create_client_action(settings: ServerSettings, license_id: str, action_type: str, message: str = "") -> ClientAction:
+    license = get_premium_license(settings, license_id)
+    if license is None:
+        raise ValueError("Premium license not found.")
+    if action_type not in {"diagnostics_request", "update_suggestion"}:
+        raise ValueError("Unsupported client action type.")
+
+    action_id = uuid4().hex
+    created_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                INSERT INTO client_actions (
+                    action_id, license_id, created_at, updated_at, action_type,
+                    status, message, result_message
+                )
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, '')
+                """,
+                (action_id, license.license_id, created_at, created_at, action_type, message.strip()),
+            )
+    action = get_client_action(settings, action_id)
+    if action is None:
+        raise RuntimeError("Client action was not created.")
+    return action
+
+
+def get_client_action(settings: ServerSettings, action_id: str) -> ClientAction | None:
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT action_id, license_id, created_at, updated_at, action_type, status, message, result_message
+            FROM client_actions
+            WHERE action_id = ?
+            """,
+            (action_id.strip(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return _client_action_from_row(row)
+
+
+def list_pending_client_actions(settings: ServerSettings, license_key: str, limit: int = 20) -> list[ClientAction]:
+    license = get_premium_license(settings, license_key)
+    if license is None:
+        return []
+    limit = max(1, min(limit, 50))
+    with closing(_connect(settings)) as db:
+        rows = db.execute(
+            """
+            SELECT action_id, license_id, created_at, updated_at, action_type, status, message, result_message
+            FROM client_actions
+            WHERE license_id = ? AND status = 'pending'
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (license.license_id, limit),
+        ).fetchall()
+    return [_client_action_from_row(row) for row in rows]
+
+
+def mark_client_action(
+    settings: ServerSettings,
+    action_id: str,
+    license_key: str,
+    status: str,
+    result_message: str = "",
+) -> ClientAction:
+    license = get_premium_license(settings, license_key)
+    action = get_client_action(settings, action_id)
+    if license is None or action is None or action.license_id != license.license_id:
+        raise ValueError("Client action not found.")
+    if status not in {"done", "declined", "error", "seen"}:
+        raise ValueError("Unsupported client action status.")
+
+    updated_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE client_actions
+                SET updated_at = ?, status = ?, result_message = ?
+                WHERE action_id = ? AND license_id = ?
+                """,
+                (updated_at, status, result_message.strip()[:1000], action.action_id, license.license_id),
+            )
+    updated = get_client_action(settings, action.action_id)
+    if updated is None:
+        raise RuntimeError("Client action disappeared after update.")
+    return updated
 
 
 def premium_key_hash(license_key: str) -> str:
@@ -499,6 +649,19 @@ def _premium_license_from_row(row: tuple[object, ...]) -> PremiumLicense:
         total_used_seconds=int(row[9]),
         total_amount_rub=int(row[10]),
         last_seen_at=str(row[11]),
+    )
+
+
+def _client_action_from_row(row: tuple[object, ...]) -> ClientAction:
+    return ClientAction(
+        action_id=str(row[0]),
+        license_id=str(row[1]),
+        created_at=str(row[2]),
+        updated_at=str(row[3]),
+        action_type=str(row[4]),
+        status=str(row[5]),
+        message=str(row[6]),
+        result_message=str(row[7]),
     )
 
 
