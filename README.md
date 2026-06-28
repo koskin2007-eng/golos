@@ -54,6 +54,12 @@
 .\.venv\Scripts\python.exe -m voice_input.app --smoke-test
 ```
 
+Проверка обновлений через GitHub Releases:
+
+```powershell
+.\.venv\Scripts\python.exe -m voice_input.app --check-update
+```
+
 EXE во время активной доработки не пересобираем. Сборка нужна только перед передачей программы другому человеку или перед GitHub Release.
 
 ## 4. Как выбрать микрофон
@@ -228,10 +234,12 @@ dist/Golos/
 Скрипт соберёт EXE и подготовит:
 
 ```text
-dist/release/v0.1.0/Golos-win64.zip
-dist/release/v0.1.0/Golos-win64.sha256
-dist/release/v0.1.0/latest.json
+dist/release/vX.Y.Z/Golos-win64.zip
+dist/release/vX.Y.Z/Golos-win64.sha256
+dist/release/vX.Y.Z/latest.json
 ```
+
+Номер папки соответствует текущей версии из `voice_input/version.py`.
 
 В EXE не зашиваются `.env`, OpenAI API key и локальные пользовательские настройки.
 

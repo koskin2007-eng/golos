@@ -51,6 +51,13 @@ Stage 1 release commands:
 
 The package script creates `dist/release/vX.Y.Z/Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
 
+Current implementation:
+
+- app version is stored in `voice_input/version.py`;
+- settings tab `Обновления` shows the current version;
+- CLI command `--check-update` reads public `latest.json`;
+- update package download verifies SHA256 before saving to `updates/`.
+
 Detailed staged implementation plan:
 
 ```text

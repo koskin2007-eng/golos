@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -9,6 +10,7 @@ from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, deep_merge
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
+from voice_input.updater import UpdateInfo, check_for_update, download_update
 from voice_input.version import APP_VERSION
 
 
@@ -94,6 +96,10 @@ class SettingsWindow:
         self.profile_info_var = tk.StringVar()
         self.recognition_model_info_var = tk.StringVar()
         self.correction_model_info_var = tk.StringVar()
+        self.update_status_var = tk.StringVar(value="Обновления ещё не проверялись.")
+        self.update_detail_var = tk.StringVar(value="")
+        self.latest_update_info: UpdateInfo | None = None
+        self.download_update_button: ttk.Button | None = None
 
         self._configure_styles()
         self._build()
@@ -260,13 +266,28 @@ class SettingsWindow:
         ).pack(anchor="w", pady=(0, 10))
         tk.Label(
             panel,
-            text="Проверка и установка обновлений через GitHub Releases будет добавлена следующим шагом.",
+            textvariable=self.update_status_var,
+            bg=COLORS["panel"],
+            fg=COLORS["ink"],
+            justify="left",
+            wraplength=560,
+        ).pack(anchor="w", pady=(0, 8))
+        tk.Label(
+            panel,
+            textvariable=self.update_detail_var,
             bg=COLORS["panel"],
             fg=COLORS["muted"],
             justify="left",
-            wraplength=560,
-        ).pack(anchor="w")
-        ttk.Button(panel, text="Открыть GitHub", command=self._open_github).pack(anchor="w", pady=(14, 0))
+            wraplength=620,
+        ).pack(anchor="w", pady=(0, 14))
+
+        buttons = ttk.Frame(panel, style="Panel.TFrame")
+        buttons.pack(anchor="w")
+        ttk.Button(buttons, text="Проверить обновления", style="Accent.TButton", command=self._check_updates).pack(side="left")
+        self.download_update_button = ttk.Button(buttons, text="Скачать обновление", command=self._download_update)
+        self.download_update_button.pack(side="left", padx=(10, 0))
+        self.download_update_button.state(["disabled"])
+        ttk.Button(buttons, text="Открыть GitHub", command=self._open_github).pack(side="left", padx=(10, 0))
 
     def _field(self, parent: ttk.Frame, row: int, label: str, widget: tk.Widget) -> ttk.Label:
         label_widget = ttk.Label(parent, text=label, style="Panel.TLabel")
@@ -347,6 +368,58 @@ class SettingsWindow:
         archive_path = collect_diagnostics(self.config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
         self.status_var.set(f"Диагностика сохранена: {archive_path.name}")
         os.startfile(str(archive_path.parent))  # noqa: S606 - Windows desktop helper.
+
+    def _check_updates(self) -> None:
+        self.update_status_var.set("Проверяю обновления...")
+        self.update_detail_var.set("")
+        if self.download_update_button is not None:
+            self.download_update_button.state(["disabled"])
+
+        def worker() -> None:
+            try:
+                result = check_for_update()
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self._show_update_error(exc))
+                return
+            self.root.after(0, lambda: self._show_update_result(result))
+
+        threading.Thread(target=worker, name="check-updates", daemon=True).start()
+
+    def _show_update_error(self, exc: Exception) -> None:
+        self.latest_update_info = None
+        self.update_status_var.set("Не удалось проверить обновления.")
+        self.update_detail_var.set(str(exc))
+        if self.download_update_button is not None:
+            self.download_update_button.state(["disabled"])
+
+    def _show_update_result(self, result) -> None:  # noqa: ANN001
+        self.latest_update_info = result.info
+        self.update_status_var.set(result.message)
+        if result.info is not None:
+            self.update_detail_var.set(f"Последняя версия: {result.latest_version}. Файл: {result.info.asset}.")
+        if self.download_update_button is not None:
+            self.download_update_button.state(["!disabled"] if result.update_available else ["disabled"])
+
+    def _download_update(self) -> None:
+        if self.latest_update_info is None:
+            return
+        info = self.latest_update_info
+        self.update_status_var.set(f"Скачиваю {info.asset}...")
+
+        def worker() -> None:
+            try:
+                path = download_update(info)
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self._show_update_error(exc))
+                return
+            self.root.after(0, lambda: self._show_download_result(path))
+
+        threading.Thread(target=worker, name="download-update", daemon=True).start()
+
+    def _show_download_result(self, path: Path) -> None:
+        self.update_status_var.set("Обновление скачано и проверено.")
+        self.update_detail_var.set(str(path))
+        os.startfile(str(path.parent))  # noqa: S606 - Windows desktop helper.
 
     def _open_github(self) -> None:
         os.startfile("https://github.com/koskin2007-eng/golos")  # noqa: S606 - Windows desktop helper.

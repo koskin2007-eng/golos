@@ -4,6 +4,7 @@
 temp/
 logs/
 diagnostics/
+updates/
 models/
 dist/
 build/

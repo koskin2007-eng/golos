@@ -70,6 +70,7 @@ These folders are local runtime output and are not committed:
 - `voice_input/paste.py` - text paste through clipboard and keyboard shortcuts.
 - `voice_input/tray.py` - system tray UI.
 - `voice_input/settings_window.py` - user-facing settings window.
+- `voice_input/updater.py` - GitHub Release update check and verified package download.
 - `voice_input/version.py` - application version, release tag, and GitHub repository id.
 - `voice_input/diagnostics.py` - safe diagnostic zip collection.
 - `voice_input/single_instance.py` - Windows mutex to prevent duplicate app instances.

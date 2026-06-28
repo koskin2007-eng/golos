@@ -26,6 +26,7 @@ from voice_input.text_corrector import OpenAITextCorrector
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
+from voice_input.updater import check_for_update
 from voice_input.utils import clean_transcript
 from voice_input.version import APP_NAME, APP_VERSION
 
@@ -364,6 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--set-profile", default="", help="Выбрать recognition_profile в config.yaml и выйти.")
     parser.add_argument("--collect-diagnostics", action="store_true", help="Создать zip диагностики и выйти.")
     parser.add_argument("--settings", action="store_true", help="Открыть окно настроек и выйти.")
+    parser.add_argument("--check-update", action="store_true", help="Проверить обновления через GitHub Releases.")
     parser.add_argument("--version", action="store_true", help="Показать версию и выйти.")
     return parser
 
@@ -376,6 +378,17 @@ def main(argv: list[str] | None = None) -> int:
         load_dotenv_file()
         if args.version:
             print(f"{APP_NAME} {APP_VERSION}")
+            return 0
+
+        if args.check_update:
+            result = check_for_update()
+            print(result.message)
+            print(f"current_version={result.current_version}")
+            print(f"latest_version={result.latest_version}")
+            print(f"update_available={str(result.update_available).lower()}")
+            if result.info is not None:
+                print(f"url={result.info.url}")
+                print(f"sha256={result.info.sha256}")
             return 0
 
         config_manager = ConfigManager(args.config)
