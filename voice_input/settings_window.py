@@ -213,7 +213,7 @@ class SettingsWindow:
         ttk.Label(panel, text="Основное", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         self._field(panel, 1, "Горячая клавиша", ttk.Entry(panel, textvariable=self.hotkey_var, width=24))
         self._field(panel, 2, "Язык", ttk.Combobox(panel, textvariable=self.language_var, values=list(LANGUAGE_OPTIONS), state="readonly", width=22))
-        ttk.Checkbutton(panel, text="Звуковой сигнал при записи", variable=self.beep_var).grid(row=3, column=1, sticky="w", pady=8)
+        ttk.Checkbutton(panel, text="Звуковой сигнал при начале и окончании записи", variable=self.beep_var).grid(row=3, column=1, sticky="w", pady=8)
         autostart = ttk.Checkbutton(panel, text="Запускать Голос вместе с Windows", variable=self.autostart_var)
         autostart.grid(row=4, column=1, sticky="w", pady=8)
         if not is_windows():

@@ -34,6 +34,11 @@ from voice_input.utils import clean_transcript
 from voice_input.version import APP_NAME, APP_VERSION
 
 
+RECORD_START_BEEP_HZ = 900
+RECORD_STOP_BEEP_HZ = 520
+RECORD_BEEP_DURATION_MS = 80
+
+
 def load_dotenv_file() -> None:
     try:
         from dotenv import load_dotenv
@@ -180,7 +185,7 @@ class VoiceInputApp:
 
         try:
             self.set_status("запись")
-            self._beep(900)
+            self._beep(RECORD_START_BEEP_HZ)
             self.recorder.start()
             self.logger.info("Recording started")
         except Exception as exc:  # noqa: BLE001
@@ -200,7 +205,7 @@ class VoiceInputApp:
         release_started = time.perf_counter()
         try:
             recording = self.recorder.stop()
-            self._beep(600)
+            self._beep(RECORD_STOP_BEEP_HZ)
             self.logger.info(
                 "Recording stopped record_seconds=%.2f frames=%s wav=%s",
                 recording.duration_seconds,
@@ -371,7 +376,7 @@ class VoiceInputApp:
         try:
             import winsound
 
-            winsound.Beep(frequency, 80)
+            winsound.Beep(frequency, RECORD_BEEP_DURATION_MS)
         except Exception:  # noqa: BLE001
             pass
 
