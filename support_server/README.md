@@ -1,5 +1,43 @@
 # Golos Support Server
 
+## Production deployment
+
+Current production endpoint:
+
+```text
+https://golos.msgcrm.ru
+```
+
+Server layout:
+
+```text
+/opt/golos-support                 # git checkout
+/etc/golos-support/golos-support.env
+/var/lib/golos-support             # SQLite and diagnostic ZIP files
+/etc/systemd/system/golos-support.service
+/etc/nginx/sites-available/golos-support
+```
+
+Runtime:
+
+- systemd service: `golos-support`
+- local listen address: `127.0.0.1:8765`
+- public proxy: nginx HTTPS on `golos.msgcrm.ru`
+- token source: `GOLOS_SUPPORT_TOKEN` in the server env file
+
+Production checks:
+
+```bash
+systemctl status golos-support
+curl -fsS http://127.0.0.1:8765/health
+curl -fsS https://golos.msgcrm.ru/health
+curl -fsS https://golos.msgcrm.ru/api/update
+nginx -t
+certbot certificates
+```
+
+Do not commit server env files, support tokens, diagnostic archives, SQLite data, SSH keys, or production backups.
+
 Минимальный сервер поддержки для проекта "Голос".
 
 ## Что умеет
