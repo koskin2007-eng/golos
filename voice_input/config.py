@@ -90,6 +90,10 @@ logs:
 
 performance:
   preload_model: false
+
+support:
+  server_url: ""
+  token_env: "GOLOS_SUPPORT_TOKEN"
 """
 
 
@@ -178,6 +182,10 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "performance": {
         "preload_model": False,
     },
+    "support": {
+        "server_url": "",
+        "token_env": "GOLOS_SUPPORT_TOKEN",
+    },
 }
 
 
@@ -238,6 +246,12 @@ class PerformanceSettings:
 
 
 @dataclass(slots=True)
+class SupportSettings:
+    server_url: str = ""
+    token_env: str = "GOLOS_SUPPORT_TOKEN"
+
+
+@dataclass(slots=True)
 class AppConfig:
     hotkey: str
     language: str
@@ -254,6 +268,7 @@ class AppConfig:
     startup: StartupSettings
     logs: LogSettings
     performance: PerformanceSettings
+    support: SupportSettings
 
 
 def deep_merge(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -304,6 +319,7 @@ def build_config(data: dict[str, Any]) -> AppConfig:
         startup=StartupSettings(**data["startup"]),
         logs=LogSettings(**data["logs"]),
         performance=PerformanceSettings(**data["performance"]),
+        support=SupportSettings(**data["support"]),
     )
 
 

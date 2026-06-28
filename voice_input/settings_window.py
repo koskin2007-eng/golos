@@ -11,7 +11,7 @@ from voice_input.diagnostics import collect_diagnostics
 from voice_input.logger import DEFAULT_LOG_PATH
 from voice_input.paths import resolve_runtime_path
 from voice_input.shortcuts import is_windows, shortcut_status, sync_shortcuts
-from voice_input.support import create_support_package, open_support_package
+from voice_input.support import create_support_package, open_support_package, support_token_from_env, upload_support_package
 from voice_input.updater import UpdateInfo, check_for_update, download_update
 from voice_input.version import APP_VERSION
 
@@ -403,12 +403,27 @@ class SettingsWindow:
     def _prepare_support_request(self) -> None:
         try:
             package = create_support_package(self.config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
-            open_support_package(package)
+            support = self.config.get("support") or {}
+            server_url = str(support.get("server_url") or "").strip()
+            if server_url:
+                result = upload_support_package(
+                    package,
+                    server_url,
+                    support_token_from_env(str(support.get("token_env") or "GOLOS_SUPPORT_TOKEN")),
+                    metadata={
+                        "profile": str(self.config.get("recognition_profile") or ""),
+                        "backend": str(self.config.get("backend") or ""),
+                    },
+                )
+                message = result.message
+            else:
+                open_support_package(package)
+                message = "Открыл GitHub и папку с архивом. Прикрепите ZIP-файл к обращению."
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Голос", f"Не удалось подготовить обращение: {exc}")
             return
         self.status_var.set(f"Диагностика готова: {package.archive_path.name}")
-        messagebox.showinfo("Голос", "Открыл GitHub и папку с архивом. Прикрепите ZIP-файл к обращению.")
+        messagebox.showinfo("Голос", message)
 
     def _check_updates(self) -> None:
         self.update_status_var.set("Проверяю обновления...")

@@ -57,6 +57,12 @@
 .\.venv\Scripts\python.exe -m voice_input.app --prepare-support-request
 ```
 
+Локальный запуск сервера поддержки:
+
+```powershell
+.\support_server\run_local.ps1
+```
+
 ## Сборка EXE
 
 Во время активной разработки EXE не пересобирать без явной причины. Это долго и мешает быстрым итерациям.

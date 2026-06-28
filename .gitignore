@@ -5,6 +5,7 @@ temp/
 logs/
 diagnostics/
 updates/
+support_server/data/
 models/
 dist/
 build/

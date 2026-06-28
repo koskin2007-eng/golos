@@ -9,6 +9,12 @@
 ├─ run.ps1
 ├─ build_exe.ps1
 ├─ package_release.ps1
+├─ support_server/
+│  ├─ main.py
+│  ├─ settings.py
+│  ├─ storage.py
+│  ├─ requirements.txt
+│  └─ run_local.ps1
 ├─ docs/
 │  ├─ PROJECT_STRUCTURE.md
 │  ├─ REMOTE_RELEASE_SUPPORT_PLAN.md
@@ -43,6 +49,7 @@
 - `run.ps1` - normal development/user launch without EXE rebuild.
 - `build_exe.ps1` - PyInstaller release build script.
 - `package_release.ps1` - release packager that creates `Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
+- `support_server/` - optional FastAPI server for diagnostics, events, and update metadata.
 
 ## Docs
 
@@ -81,6 +88,14 @@ These folders are local runtime output and are not committed:
 - `voice_input/logger.py` - rotating file and console logs.
 - `voice_input/paths.py` - source vs EXE runtime paths.
 - `voice_input/utils.py` - transcript cleanup helpers.
+
+## Support server
+
+- `support_server/main.py` - FastAPI entry point with `/health`, `/api/diagnostics`, `/api/events`, and `/api/update`.
+- `support_server/settings.py` - environment-based server settings.
+- `support_server/storage.py` - SQLite and diagnostic archive storage helpers.
+- `support_server/requirements.txt` - server-only Python dependencies.
+- `support_server/run_local.ps1` - local server launcher.
 
 ## Recognition backends
 

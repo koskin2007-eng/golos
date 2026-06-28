@@ -95,6 +95,19 @@ Future optional upload:
 
 Default should stay manual until privacy rules are agreed.
 
+## Support Server
+
+Current implementation:
+
+- `support_server/` FastAPI app;
+- `GET /health`;
+- `POST /api/diagnostics`;
+- `POST /api/events`;
+- `GET /api/update`;
+- SQLite storage under `support_server/data/`;
+- optional Bearer token through `GOLOS_SUPPORT_TOKEN`;
+- desktop app can upload diagnostics when `support.server_url` is configured.
+
 ## Browser extension idea
 
 A browser extension is useful only for browser text fields. It will not cover Telegram Desktop, Word, Windows apps, CRM desktop windows, or other native inputs.

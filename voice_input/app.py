@@ -23,7 +23,7 @@ from voice_input.recorder import AudioRecorder, RecordingResult
 from voice_input.shortcuts import install_shortcuts, remove_shortcuts, shortcut_status, sync_shortcuts
 from voice_input.single_instance import SingleInstanceGuard
 from voice_input.settings_window import open_settings_window
-from voice_input.support import create_support_package, open_support_package
+from voice_input.support import create_support_package, open_support_package, support_token_from_env, upload_support_package
 from voice_input.text_corrector import OpenAITextCorrector
 from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
@@ -334,8 +334,19 @@ class VoiceInputApp:
 
     def prepare_support_request(self) -> Path:
         package = create_support_package(self.config_manager.path, self.log_path)
-        self.logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
-        open_support_package(package)
+        server_url = self.config.support.server_url.strip()
+        if server_url:
+            result = upload_support_package(
+                package,
+                server_url,
+                support_token_from_env(self.config.support.token_env),
+                metadata={"profile": self.config.recognition_profile, "backend": self.config.backend},
+            )
+            self.logger.info("Support diagnostics uploaded report_id=%s message=%s", result.report_id, result.message)
+            self._notify("Голос", result.message)
+        else:
+            self.logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
+            open_support_package(package)
         return package.archive_path
 
     def open_settings(self) -> None:
@@ -470,11 +481,23 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.prepare_support_request:
             package = create_support_package(config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
-            open_support_package(package)
-            logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
+            if config.support.server_url.strip():
+                result = upload_support_package(
+                    package,
+                    config.support.server_url,
+                    support_token_from_env(config.support.token_env),
+                    metadata={"profile": config.recognition_profile, "backend": config.backend},
+                )
+                logger.info("Support diagnostics uploaded report_id=%s message=%s", result.report_id, result.message)
+                print(f"Diagnostics uploaded: {result.message}")
+                print(f"Report id: {result.report_id}")
+            else:
+                open_support_package(package)
+                logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
             print(f"Diagnostics saved: {package.archive_path}")
             print(f"Issue text saved: {package.issue_body_path}")
-            print(f"GitHub issue URL: {package.issue_url}")
+            if not config.support.server_url.strip():
+                print(f"GitHub issue URL: {package.issue_url}")
             return 0
 
         if args.list_devices:
