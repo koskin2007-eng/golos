@@ -10,6 +10,7 @@
 ├─ build_exe.ps1
 ├─ docs/
 │  ├─ PROJECT_STRUCTURE.md
+│  ├─ REMOTE_RELEASE_SUPPORT_PLAN.md
 │  ├─ ROADMAP.md
 │  └─ ui-mockup.png
 └─ voice_input/
@@ -38,6 +39,13 @@
 - `requirements.txt` - Python dependencies.
 - `run.ps1` - normal development/user launch without EXE rebuild.
 - `build_exe.ps1` - PyInstaller release build script.
+
+## Docs
+
+- `docs/PROJECT_STRUCTURE.md` - project file map.
+- `docs/ROADMAP.md` - short product and technical roadmap.
+- `docs/REMOTE_RELEASE_SUPPORT_PLAN.md` - staged plan for GitHub Releases, updates, diagnostics, support server, and OpenAI key modes.
+- `docs/ui-mockup.png` - early interface mockup.
 
 ## Runtime folders
 

@@ -227,6 +227,12 @@ dist/Golos/
 docs/PROJECT_STRUCTURE.md
 ```
 
+План релизов, обновлений, диагностики и будущего сервера поддержки:
+
+```text
+docs/REMOTE_RELEASE_SUPPORT_PLAN.md
+```
+
 ## 9. Как добавить автозапуск Windows
 
 Самый простой вариант:

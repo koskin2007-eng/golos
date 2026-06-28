@@ -43,6 +43,12 @@ Recommended path: GitHub Releases as the update source.
 
 This keeps updates centralized without needing a custom server.
 
+Detailed staged implementation plan:
+
+```text
+docs/REMOTE_RELEASE_SUPPORT_PLAN.md
+```
+
 ## Diagnostics strategy
 
 Implemented first:
