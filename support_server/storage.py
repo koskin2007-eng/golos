@@ -28,6 +28,22 @@ class DiagnosticRecord:
     size_bytes: int
 
 
+@dataclass(slots=True)
+class DiagnosticReport:
+    report_id: str
+    created_at: str
+    installation_id: str
+    app_version: str
+    profile: str
+    backend: str
+    platform: str
+    original_filename: str
+    stored_path: Path
+    size_bytes: int
+    sha256: str
+    notes: str
+
+
 def init_storage(settings: ServerSettings) -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     diagnostics_dir(settings).mkdir(parents=True, exist_ok=True)
@@ -70,6 +86,50 @@ def init_storage(settings: ServerSettings) -> None:
 
 def diagnostics_dir(settings: ServerSettings) -> Path:
     return settings.data_dir / "diagnostics"
+
+
+def list_diagnostic_reports(settings: ServerSettings, limit: int = 50) -> list[DiagnosticReport]:
+    limit = max(1, min(limit, 200))
+    with closing(_connect(settings)) as db:
+        rows = db.execute(
+            """
+            SELECT report_id, created_at, installation_id, app_version, profile, backend,
+                   platform, original_filename, stored_path, size_bytes, sha256, notes
+            FROM diagnostic_reports
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_diagnostic_report_from_row(row) for row in rows]
+
+
+def get_diagnostic_report(settings: ServerSettings, report_id: str) -> DiagnosticReport | None:
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT report_id, created_at, installation_id, app_version, profile, backend,
+                   platform, original_filename, stored_path, size_bytes, sha256, notes
+            FROM diagnostic_reports
+            WHERE report_id = ?
+            """,
+            (report_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _diagnostic_report_from_row(row)
+
+
+def resolve_report_archive(settings: ServerSettings, report: DiagnosticReport) -> Path:
+    archive_path = report.stored_path.resolve()
+    root = diagnostics_dir(settings).resolve()
+    try:
+        archive_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Diagnostic archive path is outside diagnostics directory.") from exc
+    if not archive_path.is_file():
+        raise FileNotFoundError(str(archive_path))
+    return archive_path
 
 
 def save_diagnostic_report(
@@ -191,3 +251,20 @@ def _validate_zip(path: Path) -> None:
 def _safe_filename(name: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(name).name).strip("._")
     return safe or "diagnostics.zip"
+
+
+def _diagnostic_report_from_row(row: tuple[object, ...]) -> DiagnosticReport:
+    return DiagnosticReport(
+        report_id=str(row[0]),
+        created_at=str(row[1]),
+        installation_id=str(row[2]),
+        app_version=str(row[3]),
+        profile=str(row[4]),
+        backend=str(row[5]),
+        platform=str(row[6]),
+        original_filename=str(row[7]),
+        stored_path=Path(str(row[8])),
+        size_bytes=int(row[9]),
+        sha256=str(row[10]),
+        notes=str(row[11]),
+    )
