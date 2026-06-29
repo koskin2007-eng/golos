@@ -24,9 +24,11 @@ Write-Host "Building Golos version $Version"
     --clean `
     --noconsole `
     --name Golos `
+    --icon voice_input\assets\golos.ico `
     --distpath dist `
     --workpath build `
     --specpath build `
+    --add-data "voice_input\assets;voice_input\assets" `
     --collect-all faster_whisper `
     voice_input\app.py
 

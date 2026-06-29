@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from voice_input.branding import asset_path
 from voice_input.paths import runtime_base_dir
 
 
@@ -107,6 +108,7 @@ def _remove_shortcut(path: Path | None) -> None:
 def _create_shortcut(shortcut_path: Path, config_path: str | Path) -> None:
     target_path, arguments, working_directory = _launch_command(config_path)
     shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    icon_location = _shortcut_icon_location(target_path)
 
     env = os.environ.copy()
     env.update(
@@ -116,7 +118,7 @@ def _create_shortcut(shortcut_path: Path, config_path: str | Path) -> None:
             "GOLOS_SHORTCUT_ARGS": arguments,
             "GOLOS_SHORTCUT_WORKDIR": str(working_directory),
             "GOLOS_SHORTCUT_DESCRIPTION": "Голосовой ввод Голос",
-            "GOLOS_SHORTCUT_ICON": f"{target_path},0",
+            "GOLOS_SHORTCUT_ICON": icon_location,
         }
     )
     subprocess.run(
@@ -144,6 +146,15 @@ def _launch_command(config_path: str | Path) -> tuple[Path, str, Path]:
         target_path = Path(sys.executable).resolve()
         arguments = subprocess.list2cmdline(["-m", "voice_input.app", "--config", str(resolved_config_path)])
     return target_path, arguments, runtime_base_dir()
+
+
+def _shortcut_icon_location(target_path: Path) -> str:
+    if getattr(sys, "frozen", False):
+        return f"{target_path},0"
+    icon_path = asset_path("golos.ico")
+    if icon_path.exists():
+        return str(icon_path)
+    return f"{target_path},0"
 
 
 _CREATE_SHORTCUT_SCRIPT = r"""

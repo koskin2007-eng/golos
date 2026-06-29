@@ -7,6 +7,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from voice_input.branding import PUBLIC_SITE_URL, create_logo_image
+
 
 class TrayController:
     def __init__(
@@ -34,22 +36,13 @@ class TrayController:
     def run(self) -> None:
         try:
             import pystray
-            from PIL import Image, ImageDraw
         except ImportError as exc:
             raise RuntimeError("pystray and Pillow are required for tray mode. Run .\\run.ps1 first.") from exc
-
-        def create_image():
-            image = Image.new("RGB", (64, 64), "#0b1220")
-            draw = ImageDraw.Draw(image)
-            draw.rounded_rectangle((8, 8, 56, 56), radius=12, fill="#0f766e", outline="#38bdf8", width=3)
-            draw.ellipse((25, 14, 39, 38), fill="#ffffff")
-            draw.rounded_rectangle((29, 36, 35, 49), radius=3, fill="#ffffff")
-            draw.line((20, 49, 44, 49), fill="#ffffff", width=4)
-            return image
 
         menu = pystray.Menu(
             pystray.MenuItem(lambda _item: f"Статус: {self.status_getter()}", None, enabled=False),
             pystray.MenuItem("Открыть настройки", self._open_settings),
+            pystray.MenuItem("Сайт Голос", self._open_site),
             pystray.MenuItem("Перезапустить Голос", self._restart, enabled=self.restart_requester is not None),
             pystray.MenuItem("Открыть лог", lambda _icon, _item: self._open_path(self.log_path)),
             pystray.MenuItem("Собрать диагностику", self._collect_diagnostics, enabled=self.diagnostics_collector is not None),
@@ -57,7 +50,7 @@ class TrayController:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Выход", self._exit),
         )
-        self._icon = pystray.Icon("voice_input", create_image(), "Голос", menu)
+        self._icon = pystray.Icon("voice_input", create_logo_image(64), "Голос", menu)
         self._icon.run()
 
     def notify(self, title: str, message: str) -> None:
@@ -94,6 +87,9 @@ class TrayController:
             self.restart_requester()
             return
         self._exit(icon, item)
+
+    def _open_site(self, icon, item) -> None:  # noqa: ANN001
+        self._open_url(PUBLIC_SITE_URL)
 
     def _collect_diagnostics(self, icon, item) -> None:  # noqa: ANN001
         if self.diagnostics_collector is None:
@@ -142,3 +138,12 @@ class TrayController:
     def _open_path(path: Path) -> None:
         if path.exists():
             os.startfile(str(path))  # noqa: S606 - Windows desktop helper.
+
+    @staticmethod
+    def _open_url(url: str) -> None:
+        try:
+            os.startfile(url)  # noqa: S606 - Windows desktop helper.
+        except (AttributeError, OSError):
+            import webbrowser
+
+            webbrowser.open(url)

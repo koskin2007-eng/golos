@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import webbrowser
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -19,6 +20,7 @@ from voice_input.account import (
     register_account,
     save_account_session,
 )
+from voice_input.branding import GITHUB_URL, PUBLIC_SITE_URL, asset_path, create_logo_image
 from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, PremiumSettings, deep_merge
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.env_file import OPENAI_API_KEY_NAME, default_env_path, env_value_exists, normalize_openai_api_key, set_env_value
@@ -62,33 +64,33 @@ LANGUAGE_OPTIONS = {
 
 PROFILE_HELP_TEXT = {
     "base": (
-        "База: распознавание выполняется на вашем компьютере локальной моделью. "
-        "Аудио не отправляется в интернет. Это базовые настройки с нормальным балансом скорости и качества."
+        "Локальный базовый режим: распознавание выполняется на вашем компьютере. "
+        "Аудио не отправляется в интернет. Это рабочий баланс скорости и качества."
     ),
     "small": (
-        "Смолл: распознавание выполняется на вашем компьютере локальной моделью. "
-        "Работает медленнее базы, но обычно качественнее распознаёт русский текст."
+        "Локальный улучшенный режим: распознавание выполняется на вашем компьютере. "
+        "Работает медленнее базового, но обычно точнее распознаёт русский текст."
     ),
     "tiny": (
-        "Тини: распознавание выполняется на вашем компьютере локальной моделью. "
-        "Это самый быстрый вариант, но качество распознавания заметно хуже."
+        "Локальный быстрый режим: распознавание выполняется на вашем компьютере. "
+        "Это самый быстрый вариант, но качество распознавания ниже."
     ),
     "openai": (
-        "OpenAI: аудио отправляется через интернет в OpenAI и распознаётся GPT-моделью. "
-        "Обычно лучше подходит для сложной диктовки, но требует ключ OpenAI и интернет."
+        "OpenAI напрямую: аудио отправляется из этой программы в OpenAI по вашему личному API-ключу. "
+        "Баланс Голос Премиум в этом режиме не списывается."
     ),
     "premium": (
-        "Премиум: аудио отправляется через интернет на сервер Голос, а сервер распознаёт его через OpenAI. "
-        "Подходит для пользователей без собственного OpenAI API-ключа."
+        "Голос Премиум: аудио отправляется на сервер Голос, сервер распознаёт его через OpenAI "
+        "и списывает минуты с вашего баланса."
     ),
 }
 
 PROFILE_LABELS = {
-    "base": "База - локально, базовые настройки",
-    "small": "Смолл - локально, медленнее, качественнее",
-    "tiny": "Тини - локально, быстро, качество хуже",
-    "openai": "OpenAI - через интернет, с помощью GPT",
-    "premium": "Премиум Голос - через наш сервер",
+    "base": "Локально: базовый баланс",
+    "small": "Локально: лучше, медленнее",
+    "tiny": "Локально: быстро, качество ниже",
+    "openai": "OpenAI напрямую: свой API-ключ",
+    "premium": "Голос Премиум: через наш сервер",
 }
 
 PROFILE_ORDER = ("base", "small", "tiny", "openai", "premium")
@@ -108,9 +110,11 @@ class SettingsWindow:
 
         self.root = tk.Tk()
         self.root.title("Голос - настройки")
-        self.root.geometry("900x740")
-        self.root.minsize(820, 700)
+        self.root.geometry("920x720")
+        self.root.minsize(760, 560)
         self.root.configure(bg=COLORS["bg"])
+        self._set_window_icon()
+        self.logo_photo = None
 
         self.hotkey_var = tk.StringVar(value=str(self.config.get("hotkey") or "F8"))
         self.profile_var = tk.StringVar(value=self._profile_label(str(self.config.get("recognition_profile") or "base")))
@@ -144,8 +148,9 @@ class SettingsWindow:
         self.update_detail_var = tk.StringVar(value="")
         self.shortcut_status_var = tk.StringVar(value=self._shortcut_status_text())
         support = self.config.get("support") or {}
-        self.support_server_url_var = tk.StringVar(value=str(support.get("server_url") or ""))
+        self.support_server_url_var = tk.StringVar(value=str(support.get("server_url") or DEFAULT_ACCOUNT_SERVER_URL))
         self.support_status_var = tk.StringVar(value=self._support_status_text())
+        self.support_message_text: tk.Text | None = None
         self.latest_update_info: UpdateInfo | None = None
         self.download_update_button: ttk.Button | None = None
 
@@ -186,17 +191,62 @@ class SettingsWindow:
         style.configure("TCheckbutton", background=COLORS["panel"], foreground=COLORS["ink"], font=("Segoe UI", 10))
         style.configure("TCombobox", padding=(8, 6))
 
+    def _set_window_icon(self) -> None:
+        icon_path = asset_path("golos.ico")
+        if not icon_path.exists():
+            return
+        try:
+            self.root.iconbitmap(str(icon_path))
+        except tk.TclError:
+            pass
+
+    def _logo_widget(self, parent: tk.Widget, size: int = 48) -> tk.Widget:
+        try:
+            from PIL import ImageTk
+
+            self.logo_photo = ImageTk.PhotoImage(create_logo_image(size))
+            return tk.Label(parent, image=self.logo_photo, bg=COLORS["nav"])
+        except Exception:  # noqa: BLE001
+            mark = tk.Canvas(parent, width=size, height=size, bg=COLORS["nav"], highlightthickness=0)
+            pad = max(4, size // 10)
+            mark.create_rectangle(pad, pad, size - pad, size - pad, fill=COLORS["green"], outline=COLORS["yellow"], width=2)
+            mark.create_oval(size * 0.39, size * 0.18, size * 0.61, size * 0.56, fill="white", outline="white")
+            mark.create_rectangle(size * 0.45, size * 0.54, size * 0.55, size * 0.78, fill="white", outline="white")
+            mark.create_line(size * 0.31, size * 0.78, size * 0.69, size * 0.78, fill="white", width=3)
+            return mark
+
+    def _scrollable_tab(self, notebook: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
+        outer = ttk.Frame(notebook)
+        canvas = tk.Canvas(outer, bg=COLORS["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        content = ttk.Frame(canvas, padding=18)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def resize_content(event: tk.Event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        def update_scroll_region(_event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def on_mousewheel(event: tk.Event) -> None:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<Configure>", resize_content)
+        content.bind("<Configure>", update_scroll_region)
+        canvas.bind("<MouseWheel>", on_mousewheel)
+        content.bind("<MouseWheel>", on_mousewheel)
+        return outer, content
+
     def _build(self) -> None:
         header = tk.Frame(self.root, bg=COLORS["nav"], height=88)
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        mark = tk.Canvas(header, width=44, height=44, bg=COLORS["nav"], highlightthickness=0)
-        mark.pack(side="left", padx=(24, 14), pady=22)
-        mark.create_rectangle(5, 5, 39, 39, fill=COLORS["green"], outline=COLORS["yellow"], width=2)
-        mark.create_oval(18, 8, 26, 26, fill="white", outline="white")
-        mark.create_rectangle(20, 26, 24, 36, fill="white", outline="white")
-        mark.create_line(13, 36, 31, 36, fill="white", width=3)
+        self._logo_widget(header, 48).pack(side="left", padx=(24, 14), pady=20)
 
         title_box = tk.Frame(header, bg=COLORS["nav"])
         title_box.pack(side="left", fill="y", pady=16)
@@ -234,30 +284,35 @@ class SettingsWindow:
         notebook = ttk.Notebook(body)
         notebook.pack(fill="both", expand=True)
 
-        main_tab = ttk.Frame(notebook, padding=18)
-        account_tab = ttk.Frame(notebook, padding=18)
-        recognition_tab = ttk.Frame(notebook, padding=18)
-        diagnostics_tab = ttk.Frame(notebook, padding=18)
-        updates_tab = ttk.Frame(notebook, padding=18)
+        main_outer, main_tab = self._scrollable_tab(notebook)
+        account_outer, account_tab = self._scrollable_tab(notebook)
+        recognition_outer, recognition_tab = self._scrollable_tab(notebook)
+        support_outer, support_tab = self._scrollable_tab(notebook)
+        updates_outer, updates_tab = self._scrollable_tab(notebook)
 
-        notebook.add(main_tab, text="Главное")
-        notebook.add(account_tab, text="Аккаунт")
-        notebook.add(recognition_tab, text="Распознавание")
-        notebook.add(diagnostics_tab, text="Диагностика")
-        notebook.add(updates_tab, text="Обновления")
+        notebook.add(main_outer, text="Главное")
+        notebook.add(account_outer, text="Аккаунт")
+        notebook.add(recognition_outer, text="Распознавание")
+        notebook.add(support_outer, text="Поддержка")
+        notebook.add(updates_outer, text="Обновления")
 
         self._build_main_tab(main_tab)
         self._build_account_tab(account_tab)
         self._build_recognition_tab(recognition_tab)
-        self._build_diagnostics_tab(diagnostics_tab)
+        self._build_support_tab(support_tab)
         self._build_updates_tab(updates_tab)
 
         footer = ttk.Frame(body)
-        footer.pack(fill="x", pady=(16, 0))
-        ttk.Button(footer, text="Перезапустить Голос", command=self._request_restart).pack(side="left")
-        ttk.Button(footer, text="Создать ярлыки Windows", command=self._create_shortcuts_now).pack(side="left", padx=(10, 0))
-        ttk.Button(footer, text="Сохранить", style="Accent.TButton", command=self._save).pack(side="right")
-        ttk.Button(footer, text="Закрыть", command=self.root.destroy).pack(side="right", padx=(0, 10))
+        footer.pack(fill="x", pady=(12, 0))
+        footer_left = ttk.Frame(footer)
+        footer_left.pack(side="left", fill="x", expand=True)
+        footer_right = ttk.Frame(footer)
+        footer_right.pack(side="right")
+        ttk.Button(footer_left, text="Перезапустить", command=self._request_restart).pack(side="left")
+        ttk.Button(footer_left, text="Ярлыки Windows", command=self._create_shortcuts_now).pack(side="left", padx=(8, 0))
+        ttk.Button(footer_left, text="Сайт", command=self._open_site).pack(side="left", padx=(8, 0))
+        ttk.Button(footer_right, text="Закрыть", command=self.root.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(footer_right, text="Сохранить", style="Accent.TButton", command=self._save).pack(side="right")
 
     def _panel(self, parent: ttk.Frame) -> ttk.Frame:
         panel = tk.Frame(parent, bg=COLORS["panel"], highlightbackground=COLORS["border"], highlightthickness=1)
@@ -284,6 +339,10 @@ class SettingsWindow:
             justify="left",
             wraplength=560,
         ).grid(row=5, column=1, sticky="w", pady=(2, 8))
+        site_box = ttk.Frame(panel, style="Panel.TFrame")
+        ttk.Button(site_box, text="Открыть сайт Голос", command=self._open_site).pack(side="left")
+        ttk.Label(site_box, text=PUBLIC_SITE_URL, style="Panel.TLabel").pack(side="left", padx=(10, 0))
+        self._field(panel, 6, "Сайт", site_box)
         panel.columnconfigure(1, weight=1)
 
     def _build_account_tab(self, parent: ttk.Frame) -> None:
@@ -400,15 +459,9 @@ class SettingsWindow:
         profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_recognition_profile_ui())
         self._refresh_recognition_profile_ui()
 
-    def _build_diagnostics_tab(self, parent: ttk.Frame) -> None:
+    def _build_support_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
-        ttk.Label(panel, text="Диагностика", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        self._field(
-            panel,
-            1,
-            "Сервер поддержки",
-            ttk.Entry(panel, textvariable=self.support_server_url_var, width=54),
-        )
+        ttk.Label(panel, text="Поддержка", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         tk.Label(
             panel,
             textvariable=self.support_status_var,
@@ -416,14 +469,32 @@ class SettingsWindow:
             fg=COLORS["muted"],
             justify="left",
             wraplength=590,
-        ).grid(row=2, column=1, sticky="w", pady=(0, 12))
+        ).grid(row=1, column=1, sticky="w", pady=(0, 12))
+
+        message_box = tk.Text(
+            panel,
+            height=5,
+            width=56,
+            wrap="word",
+            bg="#ffffff",
+            fg=COLORS["ink"],
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 10),
+        )
+        self.support_message_text = message_box
+        self._field(panel, 2, "Сообщение", message_box)
 
         buttons = ttk.Frame(panel, style="Panel.TFrame")
         buttons.grid(row=3, column=1, sticky="w", pady=(4, 0))
-        ttk.Button(buttons, text="Открыть лог", command=self._open_log).pack(side="left")
-        ttk.Button(buttons, text="Собрать диагностику", style="Accent.TButton", command=self._collect_diagnostics).pack(side="left", padx=(10, 0))
-        ttk.Button(buttons, text="Отправить диагностику", command=self._prepare_support_request).pack(side="left", padx=(10, 0))
-        ttk.Button(buttons, text="Проверить запросы поддержки", command=self._check_support_actions).pack(side="left", padx=(10, 0))
+        ttk.Button(buttons, text="Отправить обращение", style="Accent.TButton", command=self._prepare_support_request).pack(side="left")
+        ttk.Button(buttons, text="Сообщения поддержки", command=self._check_support_actions).pack(side="left", padx=(10, 0))
+        ttk.Button(buttons, text="Сайт", command=self._open_site).pack(side="left", padx=(10, 0))
+
+        tech_panel = ttk.Frame(panel, style="Panel.TFrame")
+        tech_panel.grid(row=4, column=1, sticky="w", pady=(14, 0))
+        ttk.Button(tech_panel, text="Открыть лог", command=self._open_log).pack(side="left")
+        ttk.Button(tech_panel, text="Собрать диагностику вручную", command=self._collect_diagnostics).pack(side="left", padx=(10, 0))
         panel.columnconfigure(1, weight=1)
 
     def _build_updates_tab(self, parent: ttk.Frame) -> None:
@@ -544,7 +615,7 @@ class SettingsWindow:
         raw.setdefault("text_correction", {})["model"] = text_correction_model
         raw.setdefault("feedback", {})["beep_on_recording"] = bool(self.beep_var.get())
         raw.setdefault("startup", {})["run_on_windows_startup"] = bool(self.autostart_var.get())
-        raw.setdefault("support", {})["server_url"] = self.support_server_url_var.get().strip()
+        raw.setdefault("support", {})["server_url"] = self.support_server_url_var.get().strip() or DEFAULT_ACCOUNT_SERVER_URL
         raw.setdefault("support", {})["token_env"] = str((self.config.get("support") or {}).get("token_env") or "GOLOS_SUPPORT_TOKEN")
 
         self.config_manager._write_yaml_mapping(raw)
@@ -600,10 +671,10 @@ class SettingsWindow:
         return f"{start_menu}; {startup}."
 
     def _support_status_text(self) -> str:
-        server_url = self.support_server_url_var.get().strip() if hasattr(self, "support_server_url_var") else ""
-        if server_url:
-            return "Кнопка «Отправить диагностику» отправит безопасный архив на этот сервер. Аудио, модели и ключи не входят в архив."
-        return "Если сервер не указан, кнопка откроет GitHub-обращение и папку с ZIP-архивом для ручной отправки."
+        return (
+            "Напишите, что произошло, и отправьте обращение. Голос приложит безопасные технические данные: "
+            "версию, настройки без секретов и последние ошибки. Аудио, пароли, API-ключи и текст диктовки не отправляются."
+        )
 
     def _account_status_text(self) -> str:
         email = account_email_from_env()
@@ -718,12 +789,7 @@ class SettingsWindow:
             messagebox.showerror("Голос", "Сервер не вернул ссылку на оплату.")
             return
         self.account_status_var.set("Платёж создан. Открываю страницу оплаты...")
-        try:
-            os.startfile(payment_url)  # noqa: S606 - Windows desktop helper.
-        except AttributeError:
-            import webbrowser
-
-            webbrowser.open(payment_url)
+        self._open_url(payment_url)
         messagebox.showinfo("Голос", "После оплаты вернитесь сюда и нажмите «Обновить баланс».")
 
     def _after_account_logout(self) -> None:
@@ -834,6 +900,9 @@ class SettingsWindow:
             account_token = account_token_from_env()
             if not server_url and (premium_key or account_token):
                 server_url = self._premium_settings_from_ui().server_url
+            if not server_url:
+                server_url = DEFAULT_ACCOUNT_SERVER_URL
+            user_message = self._support_message()
             if server_url:
                 result = upload_support_package(
                     package,
@@ -842,6 +911,7 @@ class SettingsWindow:
                     metadata={
                         "profile": str(self.config.get("recognition_profile") or ""),
                         "backend": str(self.config.get("backend") or ""),
+                        "message": user_message,
                     },
                     premium_key=premium_key,
                     account_token=account_token,
@@ -855,6 +925,11 @@ class SettingsWindow:
             return
         self.status_var.set(f"Диагностика готова: {package.archive_path.name}")
         messagebox.showinfo("Голос", message)
+
+    def _support_message(self) -> str:
+        if self.support_message_text is None:
+            return ""
+        return self.support_message_text.get("1.0", "end").strip()
 
     def _check_support_actions(self) -> None:
         self.status_var.set("Проверяю запросы поддержки...")
@@ -965,8 +1040,18 @@ class SettingsWindow:
         messagebox.showinfo("Голос", "Обновление готово. Голос закроется, заменит файлы и запустится заново.")
         self.root.destroy()
 
+    def _open_site(self) -> None:
+        self._open_url(PUBLIC_SITE_URL)
+
     def _open_github(self) -> None:
-        os.startfile("https://github.com/koskin2007-eng/golos")  # noqa: S606 - Windows desktop helper.
+        self._open_url(GITHUB_URL)
+
+    @staticmethod
+    def _open_url(url: str) -> None:
+        try:
+            os.startfile(url)  # noqa: S606 - Windows desktop helper.
+        except (AttributeError, OSError):
+            webbrowser.open(url)
 
     def _label_for_language(self, language: str) -> str:
         for label, code in LANGUAGE_OPTIONS.items():
@@ -988,9 +1073,9 @@ class SettingsWindow:
 
     def _recognition_model_text(self, profile: str) -> str:
         if profile == "openai":
-            return f"Через интернет с помощью OpenAI: {self.openai_model_var.get()}."
+            return f"OpenAI напрямую с этого компьютера. Нужен личный API-ключ OpenAI. Модель: {self.openai_model_var.get()}."
         if profile == "premium":
-            return "Через сервер Голос Премиум. Вход, баланс и пополнение находятся на вкладке «Аккаунт»."
+            return "Через сервер Голос Премиум. Нужен вход в аккаунт, минуты списываются с баланса."
         return f"{LOCAL_MODEL_NAMES.get(profile, 'Локальная модель')}. Работает на вашем Windows-компьютере без отправки аудио в интернет."
 
     def _correction_model_text(self, enabled: bool) -> str:
