@@ -76,6 +76,15 @@ def _recording_is_too_short(recording: RecordingResult) -> bool:
     return recording.frame_count <= 0 or recording.duration_seconds < MIN_RECORD_SECONDS
 
 
+def _background_python_executable() -> str:
+    executable = Path(sys.executable).resolve()
+    if os.name == "nt" and not getattr(sys, "frozen", False):
+        pythonw = executable.with_name("pythonw.exe")
+        if pythonw.exists():
+            return str(pythonw)
+    return str(executable)
+
+
 class VoiceInputApp:
     def __init__(self, config_path: str | Path = "config.yaml") -> None:
         self.config_manager = ConfigManager(config_path)
@@ -415,8 +424,7 @@ class VoiceInputApp:
         backend_used = self.config.backend
         try:
             self.set_status("распознавание")
-            transcriber = self._get_transcriber_for_current_config()
-            result = transcriber.transcribe(recording.wav_path)
+            result, used_network_fallback = self._transcribe_with_online_fallback(recording.wav_path)
             backend_used = result.backend
             transcribe_ms = result.elapsed_ms
             text = clean_transcript(result.text)
@@ -431,7 +439,10 @@ class VoiceInputApp:
                 self.set_status("готов")
                 return
 
-            text, correction_ms = self._correct_text_if_needed(text)
+            if used_network_fallback:
+                correction_ms = 0.0
+            else:
+                text, correction_ms = self._correct_text_if_needed(text)
 
             self.set_status("вставка")
             paste_ms = self.paster.paste(text)
@@ -454,6 +465,31 @@ class VoiceInputApp:
         finally:
             with self._state_lock:
                 self._processing = False
+
+    def _transcribe_with_online_fallback(self, wav_path: str | Path):  # noqa: ANN202
+        backend = self.config.backend
+        transcriber = self._get_transcriber_for_current_config()
+        if backend not in {"openai", "premium_proxy"}:
+            return transcriber.transcribe(wav_path), False
+
+        try:
+            return transcriber.transcribe(wav_path), False
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Online transcription failed; falling back to local_fast")
+            self.set_status("локальное распознавание")
+            self._notify(
+                "Голос",
+                "Интернет-режим недоступен. Распознаю локально на этом компьютере.",
+            )
+            fallback = self._get_transcriber("local_fast")
+            result = fallback.transcribe(wav_path)
+            self.logger.info(
+                "Online fallback succeeded original_backend=%s fallback_backend=%s reason=%s",
+                backend,
+                result.backend,
+                exc,
+            )
+            return result, True
 
     def _get_transcriber_for_current_config(self):  # noqa: ANN202
         backend = self.config.backend
@@ -558,7 +594,7 @@ class VoiceInputApp:
         if getattr(sys, "frozen", False):
             command = [sys.executable, "--settings", "--config", str(self.config_manager.path)]
         else:
-            command = [sys.executable, "-m", "voice_input.app", "--settings", "--config", str(self.config_manager.path)]
+            command = [_background_python_executable(), "-m", "voice_input.app", "--settings", "--config", str(self.config_manager.path)]
 
         subprocess.Popen(
             command,
@@ -608,7 +644,7 @@ class VoiceInputApp:
         if getattr(sys, "frozen", False):
             command = [sys.executable, "--config", str(self.config_manager.path)]
         else:
-            command = [sys.executable, "-m", "voice_input.app", "--config", str(self.config_manager.path)]
+            command = [_background_python_executable(), "-m", "voice_input.app", "--config", str(self.config_manager.path)]
         if self._no_tray:
             command.append("--no-tray")
         return command
