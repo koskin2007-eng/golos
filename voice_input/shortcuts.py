@@ -68,14 +68,14 @@ def create_start_menu_shortcut(config_path: str | Path) -> None:
     path = _start_menu_shortcut_path()
     if path is None:
         return
-    _create_shortcut(path, config_path)
+    _create_shortcut(path, config_path, open_settings=True)
 
 
 def create_startup_shortcut(config_path: str | Path) -> None:
     path = _startup_shortcut_path()
     if path is None:
         return
-    _create_shortcut(path, config_path)
+    _create_shortcut(path, config_path, open_settings=False)
 
 
 def remove_start_menu_shortcut() -> None:
@@ -105,10 +105,11 @@ def _remove_shortcut(path: Path | None) -> None:
         path.unlink(missing_ok=True)
 
 
-def _create_shortcut(shortcut_path: Path, config_path: str | Path) -> None:
-    target_path, arguments, working_directory = _launch_command(config_path)
+def _create_shortcut(shortcut_path: Path, config_path: str | Path, *, open_settings: bool) -> None:
+    target_path, arguments, working_directory = _launch_command(config_path, open_settings=open_settings)
     shortcut_path.parent.mkdir(parents=True, exist_ok=True)
     icon_location = _shortcut_icon_location(target_path)
+    window_style = "1" if open_settings else "7"
 
     env = os.environ.copy()
     env.update(
@@ -119,6 +120,7 @@ def _create_shortcut(shortcut_path: Path, config_path: str | Path) -> None:
             "GOLOS_SHORTCUT_WORKDIR": str(working_directory),
             "GOLOS_SHORTCUT_DESCRIPTION": "Голосовой ввод Голос",
             "GOLOS_SHORTCUT_ICON": icon_location,
+            "GOLOS_SHORTCUT_WINDOW_STYLE": window_style,
         }
     )
     subprocess.run(
@@ -137,14 +139,18 @@ def _create_shortcut(shortcut_path: Path, config_path: str | Path) -> None:
     )
 
 
-def _launch_command(config_path: str | Path) -> tuple[Path, str, Path]:
+def _launch_command(config_path: str | Path, *, open_settings: bool) -> tuple[Path, str, Path]:
     resolved_config_path = Path(config_path).resolve()
     if getattr(sys, "frozen", False):
         target_path = Path(sys.executable).resolve()
-        arguments = subprocess.list2cmdline(["--config", str(resolved_config_path)])
+        args = []
     else:
         target_path = _pythonw_executable()
-        arguments = subprocess.list2cmdline(["-m", "voice_input.app", "--config", str(resolved_config_path)])
+        args = ["-m", "voice_input.app"]
+    if open_settings:
+        args.append("--settings")
+    args.extend(["--config", str(resolved_config_path)])
+    arguments = subprocess.list2cmdline(args)
     return target_path, arguments, runtime_base_dir()
 
 
@@ -173,6 +179,7 @@ $arguments = $env:GOLOS_SHORTCUT_ARGS
 $workingDirectory = $env:GOLOS_SHORTCUT_WORKDIR
 $description = $env:GOLOS_SHORTCUT_DESCRIPTION
 $iconLocation = $env:GOLOS_SHORTCUT_ICON
+$windowStyle = [int]$env:GOLOS_SHORTCUT_WINDOW_STYLE
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $shortcutPath) -Force | Out-Null
 $shell = New-Object -ComObject WScript.Shell
@@ -182,6 +189,6 @@ $shortcut.Arguments = $arguments
 $shortcut.WorkingDirectory = $workingDirectory
 $shortcut.Description = $description
 $shortcut.IconLocation = $iconLocation
-$shortcut.WindowStyle = 7
+$shortcut.WindowStyle = $windowStyle
 $shortcut.Save()
 """

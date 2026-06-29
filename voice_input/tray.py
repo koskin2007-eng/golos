@@ -41,7 +41,7 @@ class TrayController:
 
         menu = pystray.Menu(
             pystray.MenuItem(lambda _item: f"Статус: {self.status_getter()}", None, enabled=False),
-            pystray.MenuItem("Открыть настройки", self._open_settings),
+            pystray.MenuItem("Открыть настройки", self._open_settings, default=True),
             pystray.MenuItem("Сайт Голос", self._open_site),
             pystray.MenuItem("Перезапустить Голос", self._restart, enabled=self.restart_requester is not None),
             pystray.MenuItem("Открыть лог", lambda _icon, _item: self._open_path(self.log_path)),
