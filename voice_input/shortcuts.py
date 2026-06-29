@@ -143,9 +143,17 @@ def _launch_command(config_path: str | Path) -> tuple[Path, str, Path]:
         target_path = Path(sys.executable).resolve()
         arguments = subprocess.list2cmdline(["--config", str(resolved_config_path)])
     else:
-        target_path = Path(sys.executable).resolve()
+        target_path = _pythonw_executable()
         arguments = subprocess.list2cmdline(["-m", "voice_input.app", "--config", str(resolved_config_path)])
     return target_path, arguments, runtime_base_dir()
+
+
+def _pythonw_executable() -> Path:
+    executable = Path(sys.executable).resolve()
+    pythonw = executable.with_name("pythonw.exe")
+    if pythonw.exists():
+        return pythonw
+    return executable
 
 
 def _shortcut_icon_location(target_path: Path) -> str:
