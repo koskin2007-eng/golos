@@ -19,16 +19,19 @@ $PythonPath = Join-Path $VenvPath "Scripts\python.exe"
 $Version = (& $PythonPath -c "from voice_input.version import APP_VERSION; print(APP_VERSION)").Trim()
 Write-Host "Building Golos version $Version"
 
+$AssetsPath = Join-Path $ProjectRoot "voice_input\assets"
+$IconPath = Join-Path $AssetsPath "golos.ico"
+
 & $PythonPath -m PyInstaller `
     --noconfirm `
     --clean `
     --noconsole `
     --name Golos `
-    --icon voice_input\assets\golos.ico `
+    --icon $IconPath `
     --distpath dist `
     --workpath build `
     --specpath build `
-    --add-data "voice_input\assets;voice_input\assets" `
+    --add-data "$AssetsPath;voice_input\assets" `
     --collect-all faster_whisper `
     voice_input\app.py
 

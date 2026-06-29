@@ -823,6 +823,23 @@ def list_account_payments(settings: ServerSettings, account_id: str, limit: int 
     return [_account_payment_from_row(row) for row in rows]
 
 
+def list_recent_account_payments(settings: ServerSettings, limit: int = 50) -> list[AccountPayment]:
+    limit = max(1, min(limit, 200))
+    with closing(_connect(settings)) as db:
+        rows = db.execute(
+            """
+            SELECT payment_id, account_id, license_id, created_at, updated_at, amount_rub,
+                   minutes, currency, status, provider, provider_order_id, provider_payment_id,
+                   payment_url, description, error_code, error_message, paid_at
+            FROM account_payments
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_account_payment_from_row(row) for row in rows]
+
+
 def set_account_payment_url(settings: ServerSettings, payment_id: str, payment_url: str) -> AccountPayment:
     with closing(_connect(settings)) as db:
         with db:

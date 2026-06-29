@@ -10,12 +10,14 @@ from typing import Any
 from support_server.settings import load_settings
 from support_server.storage import (
     create_premium_license,
+    get_account,
     get_diagnostic_report,
     get_premium_license,
     grant_premium_minutes,
     init_storage,
     list_diagnostic_reports,
     list_premium_licenses,
+    list_recent_account_payments,
     set_premium_license_active,
 )
 
@@ -38,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     show = subparsers.add_parser("show", help="Show one diagnostic report.")
     show.add_argument("report_id")
     show.add_argument("--json", action="store_true", help="Print JSON instead of a table.")
+
+    payments = subparsers.add_parser("payments", help="List recent account payments.")
+    payments.add_argument("--limit", type=int, default=20)
+    payments.add_argument("--json", action="store_true", help="Print JSON instead of a table.")
 
     premium = subparsers.add_parser("premium", help="Manage premium license keys.")
     premium_subparsers = premium.add_subparsers(dest="premium_command", required=True)
@@ -91,6 +97,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(_report_to_dict(report), ensure_ascii=False, indent=2))
         else:
             _print_report_details(_report_to_dict(report))
+        return 0
+
+    if args.command == "payments":
+        payments = list_recent_account_payments(settings, limit=args.limit)
+        if args.json:
+            print(json.dumps([_payment_to_dict(settings, payment) for payment in payments], ensure_ascii=False, indent=2))
+        else:
+            _print_payments_table(settings, payments)
         return 0
 
     if args.command == "premium":
@@ -190,6 +204,13 @@ def _license_to_dict(license: Any) -> dict[str, Any]:
     return data
 
 
+def _payment_to_dict(settings: Any, payment: Any) -> dict[str, Any]:
+    data = asdict(payment)
+    account = get_account(settings, payment.account_id)
+    data["account_email"] = account.email if account else ""
+    return data
+
+
 def _print_reports_table(reports: list[Any]) -> None:
     if not reports:
         print("No diagnostic reports.")
@@ -212,6 +233,28 @@ def _print_reports_table(reports: list[Any]) -> None:
 def _print_report_details(report: dict[str, Any]) -> None:
     for key, value in report.items():
         print(f"{key}: {value}")
+
+
+def _print_payments_table(settings: Any, payments: list[Any]) -> None:
+    if not payments:
+        print("No account payments.")
+        return
+    header = f"{'created_at':20} {'paid_at':20} {'status':10} {'amount':>8} {'minutes':>8} {'provider':10} account"
+    print(header)
+    print("-" * len(header))
+    for payment in payments:
+        account = get_account(settings, payment.account_id)
+        account_label = account.email if account else payment.account_id
+        paid_at = payment.paid_at[:20] if payment.paid_at else "-"
+        print(
+            f"{payment.created_at[:20]:20} "
+            f"{paid_at:20} "
+            f"{payment.status[:10]:10} "
+            f"{payment.amount_rub:8} "
+            f"{payment.minutes:8} "
+            f"{payment.provider[:10]:10} "
+            f"{account_label}"
+        )
 
 
 def _print_premium_table(licenses: list[Any]) -> None:

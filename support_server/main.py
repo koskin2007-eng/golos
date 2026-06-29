@@ -30,6 +30,7 @@ from support_server.storage import (
     get_account_by_token,
     get_diagnostic_report,
     get_account_payment,
+    get_account,
     get_premium_license,
     grant_premium_minutes,
     init_storage,
@@ -37,6 +38,7 @@ from support_server.storage import (
     list_pending_client_actions_for_license,
     list_diagnostic_reports,
     list_premium_licenses,
+    list_recent_account_payments,
     load_update_payload,
     logout_account,
     mark_client_action_for_license,
@@ -74,6 +76,14 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def landing():
         return HTMLResponse(_landing_html())
+
+    @app.get("/offer", response_class=HTMLResponse)
+    def offer():
+        return HTMLResponse(_offer_html())
+
+    @app.get("/privacy", response_class=HTMLResponse)
+    def privacy():
+        return HTMLResponse(_privacy_html())
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -363,6 +373,21 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             return redirect
         licenses = list_premium_licenses(server_settings, limit=limit)
         return HTMLResponse(_premium_admin_html(licenses, limit))
+
+    @app.get("/admin/payments", response_class=HTMLResponse)
+    def admin_payments(
+        limit: int = 50,
+        golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    ):
+        redirect = _redirect_to_login_if_admin_needed(server_settings, golos_admin_token)
+        if redirect is not None:
+            return redirect
+        payments = list_recent_account_payments(server_settings, limit=limit)
+        account_map = {
+            payment.account_id: get_account(server_settings, payment.account_id)
+            for payment in payments
+        }
+        return HTMLResponse(_payments_admin_html(payments, account_map, limit))
 
     @app.post("/admin/premium/create", response_class=HTMLResponse)
     def admin_premium_create(
@@ -868,6 +893,8 @@ def _landing_html() -> str:
     .admin-footer section {{ padding-top:38px; padding-bottom:38px; display:flex; align-items:center; justify-content:space-between; gap:20px; }}
     .admin-footer h2 {{ font-size:24px; color:#fff; }}
     .admin-footer p {{ margin:6px 0 0; color:#a8bea2; }}
+    .footer-links {{ display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }}
+    .footer-links a {{ color:#d9f99d; }}
     @media (max-width:860px) {{
       .nav {{ align-items:flex-start; }}
       .navlinks {{ display:none; }}
@@ -894,6 +921,8 @@ def _landing_html() -> str:
         <a href="#features">Возможности</a>
         <a href="#install">Установка</a>
         <a href="#download">Скачать</a>
+        <a href="/offer">Оферта</a>
+        <a href="/privacy">Политика</a>
       </div>
     </nav>
   </header>
@@ -992,12 +1021,101 @@ def _landing_html() -> str:
       <div>
         <h2>Администрирование</h2>
         <p>Закрытая зона для просмотра диагностики и служебной информации.</p>
+        <div class="footer-links">
+          <a href="/offer">Договор оферты</a>
+          <a href="/privacy">Политика обработки данных</a>
+        </div>
       </div>
       <a class="button outline" href="/admin/login">Вход в админку</a>
     </section>
   </footer>
 </body>
 </html>"""
+
+
+def _public_legal_layout(title: str, body: str) -> str:
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)} - Голос</title>
+  <style>
+    :root {{ color-scheme: light; --bg:#f7fbf2; --panel:#fff; --ink:#101b13; --muted:#51614b; --green:#14783d; --line:#d8e6c8; --yellow:#f9d923; }}
+    body {{ margin:0; font-family:Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--ink); line-height:1.6; }}
+    header {{ background:#0d3824; color:#fff; }}
+    nav {{ max-width:980px; margin:0 auto; padding:18px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; }}
+    nav a {{ color:#d9f99d; text-decoration:none; font-weight:700; }}
+    main {{ max-width:980px; margin:0 auto; padding:42px 22px 64px; }}
+    section {{ background:var(--panel); border:1px solid var(--line); padding:28px; }}
+    h1 {{ margin:0 0 12px; font-size:36px; line-height:1.15; }}
+    h2 {{ margin:28px 0 10px; font-size:24px; }}
+    p, li {{ color:var(--muted); }}
+    strong {{ color:var(--ink); }}
+    code {{ background:#eaf5e3; padding:2px 6px; overflow-wrap:anywhere; }}
+    .notice {{ background:#fffbe6; border:1px solid #eedb72; padding:12px 14px; color:#332900; }}
+    footer {{ max-width:980px; margin:0 auto; padding:0 22px 34px; color:var(--muted); }}
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/">Голос</a>
+      <span><a href="/offer">Оферта</a> · <a href="/privacy">Политика</a> · <a href="/admin/login">Админка</a></span>
+    </nav>
+  </header>
+  <main>
+    <section>{body}</section>
+  </main>
+  <footer>Документы являются рабочими MVP-текстами для публичного тестирования. Перед массовыми продажами их нужно сверить с юристом и реквизитами продавца.</footer>
+</body>
+</html>"""
+
+
+def _offer_html() -> str:
+    body = f"""
+<h1>Договор оферты</h1>
+<p class="notice">Рабочая редакция для MVP-релиза программы «Голос». Реквизиты продавца и финальные юридические формулировки нужно добавить перед широким публичным запуском.</p>
+<h2>1. Предмет</h2>
+<p>Сервис «Голос» предоставляет Windows-программу для голосового ввода текста и дополнительные платные минуты интернет-распознавания через сервер «Голос Премиум».</p>
+<h2>2. Бесплатные функции</h2>
+<p>Пользователь может использовать локальное распознавание на своём компьютере без оплаты. Качество локального режима зависит от микрофона, компьютера, шума и выбранного профиля распознавания.</p>
+<h2>3. Платные функции</h2>
+<p>Платная функция — интернет-распознавание через сервер «Голос Премиум». Минимальное пополнение на текущем этапе: <strong>100 рублей</strong>. Количество минут отображается в приложении после входа в аккаунт.</p>
+<h2>4. Оплата</h2>
+<p>Оплата проводится на стороне платёжного сервиса. Программа «Голос» не принимает и не хранит данные банковских карт. После успешного платежа сервер начисляет минуты на аккаунт пользователя.</p>
+<h2>5. Ограничения</h2>
+<p>Сервис предоставляется «как есть» в тестовом MVP-режиме. Возможны ошибки распознавания, задержки, временная недоступность интернет-режима или платёжного провайдера. При недоступности интернет-режима приложение может перейти на локальное распознавание.</p>
+<h2>6. Возвраты и поддержка</h2>
+<p>Если оплата прошла, но минуты не начислились, пользователь может обратиться в поддержку через программу или сайт. Возвраты и корректировки рассматриваются индивидуально по данным платежа и аккаунта.</p>
+<h2>7. Контакты и реквизиты</h2>
+<p>Реквизиты продавца будут добавлены после выбора юридической формы. Для MVP-проверки используйте страницу поддержки и закрытую админ-панель проекта.</p>
+<h2>8. Версия документа</h2>
+<p>Дата публикации: 29 июня 2026 года. Версия приложения: <code>{escape(DESKTOP_APP_VERSION)}</code>.</p>
+"""
+    return _public_legal_layout("Договор оферты", body)
+
+
+def _privacy_html() -> str:
+    body = f"""
+<h1>Политика обработки данных</h1>
+<p class="notice">Рабочая редакция для MVP-релиза. Перед массовыми продажами нужно дополнить юридическими реквизитами, сроками хранения и контактами ответственного лица.</p>
+<h2>1. Какие данные обрабатываются</h2>
+<p>Программа и сервер могут обрабатывать email, имя аккаунта, технические токены сессии, баланс минут, историю платежей, диагностические логи, версию приложения и сведения об ошибках.</p>
+<h2>2. Голосовые данные</h2>
+<p>В локальном режиме аудио обрабатывается на компьютере пользователя. В интернет-режиме аудио отправляется на сервер «Голос» или в OpenAI API в зависимости от выбранного профиля. Временные аудиофайлы не должны попадать в диагностические архивы.</p>
+<h2>3. Платежи</h2>
+<p>Данные банковских карт не хранятся в программе и на сервере «Голос». Платёж проводится на стороне платёжного сервиса. Сервер хранит только техническую информацию о платеже: сумму, статус, идентификатор операции и начисленные минуты.</p>
+<h2>4. Диагностика</h2>
+<p>Диагностический архив предназначен для поддержки и должен содержать логи, очищенный конфиг и техническую информацию. Архив не должен содержать <code>.env</code>, API-ключи, пароли, временное аудио и скачанные модели.</p>
+<h2>5. Безопасность</h2>
+<p>Секреты сервера хранятся только в переменных окружения production-сервера. Пользовательские API-ключи OpenAI хранятся локально на компьютере пользователя и не должны попадать в Git или диагностику.</p>
+<h2>6. Удаление и вопросы</h2>
+<p>Пользователь может обратиться в поддержку для проверки аккаунта, платежа, диагностики или удаления данных, когда эта процедура будет формализована для публичного релиза.</p>
+<h2>7. Версия документа</h2>
+<p>Дата публикации: 29 июня 2026 года. Версия приложения: <code>{escape(DESKTOP_APP_VERSION)}</code>.</p>
+"""
+    return _public_legal_layout("Политика обработки данных", body)
 
 
 def _admin_layout(title: str, body: str, show_logout: bool = True) -> str:
@@ -1034,13 +1152,17 @@ def _admin_layout(title: str, body: str, show_logout: bool = True) -> str:
     .keybox {{ background:#0b1f16; color:#d9f99d; padding:12px; margin:10px 0 16px; overflow-wrap:anywhere; font-size:15px; }}
     .forms {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:18px; }}
     .forms .panel {{ max-width:none; }}
+    .badge {{ display:inline-block; padding:3px 8px; border:1px solid var(--line); font-weight:700; font-size:12px; }}
+    .badge-paid {{ background:#ecfff1; border-color:#a7dfb2; color:#14532d; }}
+    .badge-pending {{ background:#fffbe6; border-color:#eedb72; color:#5d4700; }}
+    .badge-failed {{ background:#fff2f2; border-color:#f3b7b7; color:#7f1d1d; }}
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>Golos Admin</h1>
-      <nav><a href="/admin/diagnostics">Диагностика</a><a href="/admin/premium">Премиум</a><a href="/">Лендинг</a></nav>
+      <nav><a href="/admin/diagnostics">Диагностика</a><a href="/admin/premium">Премиум</a><a href="/admin/payments">Платежи</a><a href="/">Лендинг</a></nav>
     </div>
     {logout_html}
   </header>
@@ -1227,6 +1349,57 @@ def _diagnostic_detail_html(report: DiagnosticReport) -> str:
 </section>
 """
     return _admin_layout("Diagnostic detail", body)
+
+
+def _payments_admin_html(payments: list[AccountPayment], account_map: dict[str, Account | None], limit: int = 50) -> str:
+    rows = "\n".join(_payment_admin_row(payment, account_map.get(payment.account_id)) for payment in payments)
+    if not rows:
+        rows = '<tr><td colspan="9" class="muted">Платежей пока нет.</td></tr>'
+    body = f"""
+<h2>Платежи</h2>
+<p class="muted">Последние {int(limit)} платежей аккаунтов. Здесь удобно проверять YooMoney webhook и начисление минут после оплаты.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Создан</th><th>Оплачен</th><th>Статус</th><th>Сумма</th><th>Минуты</th>
+      <th>Аккаунт</th><th>Провайдер</th><th>Order</th><th>Действие</th>
+    </tr>
+  </thead>
+  <tbody>{rows}</tbody>
+</table>
+"""
+    return _admin_layout("Payments", body)
+
+
+def _payment_admin_row(payment: AccountPayment, account: Account | None) -> str:
+    status_label = {
+        "pending": "ожидает",
+        "paid": "оплачен",
+        "failed": "ошибка",
+        "canceled": "отменён",
+    }.get(payment.status, payment.status)
+    status_class = {
+        "paid": "badge-paid",
+        "pending": "badge-pending",
+        "failed": "badge-failed",
+        "canceled": "badge-failed",
+    }.get(payment.status, "")
+    account_text = escape(account.email if account else payment.account_id)
+    error_html = f"<br><span class=\"muted\">{escape(payment.error_code)}: {escape(payment.error_message)}</span>" if payment.error_message else ""
+    paid_at = payment.paid_at or "—"
+    provider_payment = payment.provider_payment_id or "—"
+    return f"""
+<tr>
+  <td>{escape(payment.created_at)}</td>
+  <td>{escape(paid_at)}</td>
+  <td><span class="badge {status_class}">{escape(status_label)}</span>{error_html}</td>
+  <td>{int(payment.amount_rub)} {escape(payment.currency)}</td>
+  <td>{int(payment.minutes)} мин.</td>
+  <td>{account_text}<br><code>{escape(payment.license_id[:12])}</code></td>
+  <td>{escape(payment.provider)}<br><span class="muted">{escape(provider_payment)}</span></td>
+  <td><code>{escape(payment.provider_order_id)}</code></td>
+  <td><a href="/account/payments/{escape(payment.payment_id)}">Открыть</a></td>
+</tr>"""
 
 
 def _premium_admin_html(
