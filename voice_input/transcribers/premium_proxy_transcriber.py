@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from voice_input.config import PremiumSettings
-from voice_input.premium import premium_key_from_env
+from voice_input.premium import premium_auth_headers, premium_key_exists
 from voice_input.transcribers import TranscriptionResult
 
 
@@ -26,16 +26,16 @@ class PremiumProxyTranscriber:
 
     @staticmethod
     def has_license_key(settings: PremiumSettings) -> bool:
-        return bool(premium_key_from_env(settings))
+        return premium_key_exists(settings)
 
     def transcribe(self, wav_path: str | Path) -> TranscriptionResult:
         server_url = self.settings.server_url.strip()
         if not server_url:
             raise RuntimeError("Адрес сервера Голос Премиум не указан.")
 
-        license_key = premium_key_from_env(self.settings)
-        if not license_key:
-            raise RuntimeError("Премиум-ключ Голос не сохранён.")
+        auth_headers = premium_auth_headers(self.settings)
+        if not auth_headers:
+            raise RuntimeError("Войдите в аккаунт Голос или сохраните премиум-ключ.")
 
         path = Path(wav_path)
         duration_seconds = _wav_duration_seconds(path)
@@ -49,7 +49,7 @@ class PremiumProxyTranscriber:
             data=body,
             headers={
                 "Content-Type": content_type,
-                "X-Golos-Premium-Key": license_key,
+                **auth_headers,
             },
             method="POST",
         )

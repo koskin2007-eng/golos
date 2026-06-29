@@ -13,6 +13,7 @@
 │  ├─ main.py
 │  ├─ settings.py
 │  ├─ storage.py
+│  ├─ yoomoney.py
 │  ├─ requirements.txt
 │  └─ run_local.ps1
 ├─ docs/
@@ -22,6 +23,7 @@
 │  └─ ui-mockup.png
 └─ voice_input/
    ├─ app.py
+   ├─ account.py
    ├─ config.py
    ├─ diagnostics.py
    ├─ hotkey.py
@@ -52,7 +54,7 @@
 - `run.ps1` - normal development/user launch without EXE rebuild.
 - `build_exe.ps1` - PyInstaller release build script.
 - `package_release.ps1` - release packager that creates `Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
-- `support_server/` - optional FastAPI server for diagnostics, events, update metadata, premium keys, and safe support actions.
+- `support_server/` - optional FastAPI server for diagnostics, events, update metadata, premium keys, in-app accounts, payments, and safe support actions.
 
 ## Docs
 
@@ -76,6 +78,7 @@ These folders are local runtime output and are not committed:
 ## Main modules
 
 - `voice_input/app.py` - app entry point, CLI, hotkey lifecycle, record-transcribe-paste pipeline.
+- `voice_input/account.py` - desktop account API client, local session token helpers, and top-up request helper.
 - `voice_input/config.py` - config loading, defaults, recognition profiles.
 - `voice_input/recorder.py` - microphone recording.
 - `voice_input/hotkey.py` - global push-to-talk key handling.
@@ -84,7 +87,7 @@ These folders are local runtime output and are not committed:
 - `voice_input/settings_window.py` - user-facing settings window.
 - `voice_input/shortcuts.py` - Windows Start Menu and Startup shortcut management.
 - `voice_input/support.py` - manual GitHub support request and diagnostic package helper.
-- `voice_input/premium.py` - local premium key helpers and balance check.
+- `voice_input/premium.py` - premium auth helpers and balance check through either legacy premium key or account token.
 - `voice_input/remote_actions.py` - safe support action polling and completion helpers.
 - `voice_input/updater.py` - GitHub Release update check, verified package download, extraction, and Windows update installer request.
 - `voice_input/version.py` - application version, release tag, and GitHub repository id.
@@ -96,9 +99,10 @@ These folders are local runtime output and are not committed:
 
 ## Support server
 
-- `support_server/main.py` - FastAPI entry point with `/health`, diagnostics, events, update metadata, premium transcription, and admin pages.
+- `support_server/main.py` - FastAPI entry point with `/health`, account APIs, payment pages, diagnostics, events, update metadata, premium transcription, and admin pages.
 - `support_server/settings.py` - environment-based server settings.
-- `support_server/storage.py` - SQLite and diagnostic archive storage helpers.
+- `support_server/storage.py` - SQLite helpers for diagnostics, premium licenses, account sessions, payments, and safe support actions.
+- `support_server/yoomoney.py` - YooMoney payment form and webhook validation helpers.
 - `support_server/requirements.txt` - server-only Python dependencies.
 - `support_server/run_local.ps1` - local server launcher.
 

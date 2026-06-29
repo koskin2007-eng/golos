@@ -9,7 +9,7 @@ import urllib.request
 import zipfile
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -71,6 +71,40 @@ class ClientAction:
     status: str
     message: str
     result_message: str
+
+
+@dataclass(slots=True)
+class Account:
+    account_id: str
+    created_at: str
+    updated_at: str
+    email: str
+    name: str
+    premium_license_id: str
+    active: bool
+    email_confirmed: bool
+    last_seen_at: str
+
+
+@dataclass(slots=True)
+class AccountPayment:
+    payment_id: str
+    account_id: str
+    license_id: str
+    created_at: str
+    updated_at: str
+    amount_rub: int
+    minutes: int
+    currency: str
+    status: str
+    provider: str
+    provider_order_id: str
+    provider_payment_id: str
+    payment_url: str
+    description: str
+    error_code: str
+    error_message: str
+    paid_at: str
 
 
 def init_storage(settings: ServerSettings) -> None:
@@ -158,6 +192,64 @@ def init_storage(settings: ServerSettings) -> None:
                     status TEXT NOT NULL,
                     message TEXT NOT NULL,
                     result_message TEXT NOT NULL,
+                    FOREIGN KEY (license_id) REFERENCES premium_licenses (license_id)
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    premium_license_id TEXT NOT NULL,
+                    active INTEGER NOT NULL,
+                    email_confirmed INTEGER NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    FOREIGN KEY (premium_license_id) REFERENCES premium_licenses (license_id)
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS account_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL UNIQUE,
+                    account_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    FOREIGN KEY (account_id) REFERENCES accounts (account_id)
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS account_payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payment_id TEXT NOT NULL UNIQUE,
+                    account_id TEXT NOT NULL,
+                    license_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    amount_rub INTEGER NOT NULL,
+                    minutes INTEGER NOT NULL,
+                    currency TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    provider_order_id TEXT NOT NULL UNIQUE,
+                    provider_payment_id TEXT NOT NULL,
+                    payment_url TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    error_code TEXT NOT NULL,
+                    error_message TEXT NOT NULL,
+                    paid_at TEXT NOT NULL,
+                    FOREIGN KEY (account_id) REFERENCES accounts (account_id),
                     FOREIGN KEY (license_id) REFERENCES premium_licenses (license_id)
                 )
                 """
@@ -387,6 +479,472 @@ def touch_premium_license(settings: ServerSettings, license_key: str) -> Premium
                 (seen_at, license.license_id),
             )
     return get_premium_license(settings, license.license_id)
+
+
+def create_account(settings: ServerSettings, email: str, password: str, name: str = "") -> tuple[str, Account]:
+    normalized_email = normalize_email(email)
+    if not normalized_email or "@" not in normalized_email:
+        raise ValueError("Укажите корректный email.")
+    if len(password) < 8:
+        raise ValueError("Пароль должен быть не короче 8 символов.")
+
+    created_at = _utc_now()
+    account_id = uuid4().hex
+    license_id = uuid4().hex
+    license_key = _new_premium_key()
+    display_name = name.strip() or normalized_email.split("@", 1)[0] or "Клиент"
+
+    with closing(_connect(settings)) as db:
+        existing = db.execute("SELECT account_id FROM accounts WHERE email = ?", (normalized_email,)).fetchone()
+        if existing is not None:
+            raise ValueError("Аккаунт с таким email уже существует.")
+
+        with db:
+            db.execute(
+                """
+                INSERT INTO premium_licenses (
+                    license_id, key_hash, key_prefix, created_at, updated_at, label, notes,
+                    active, balance_seconds, total_granted_seconds, total_used_seconds,
+                    total_amount_rub, last_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, 0, '')
+                """,
+                (
+                    license_id,
+                    premium_key_hash(license_key),
+                    license_key[:14],
+                    created_at,
+                    created_at,
+                    normalized_email,
+                    "Создан автоматически для аккаунта Голос.",
+                ),
+            )
+            _insert_premium_ledger(db, license_id, "account_create", 0, 0, "Создан аккаунт")
+            db.execute(
+                """
+                INSERT INTO accounts (
+                    account_id, created_at, updated_at, email, name, password_hash,
+                    premium_license_id, active, email_confirmed, last_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, '')
+                """,
+                (
+                    account_id,
+                    created_at,
+                    created_at,
+                    normalized_email,
+                    display_name,
+                    hash_password(password),
+                    license_id,
+                ),
+            )
+
+    token = create_account_session(settings, account_id)
+    account = get_account(settings, account_id)
+    if account is None:
+        raise RuntimeError("Account was not created.")
+    return token, account
+
+
+def authenticate_account(settings: ServerSettings, email: str, password: str) -> tuple[str, Account] | None:
+    normalized_email = normalize_email(email)
+    if not normalized_email or not password:
+        return None
+
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT account_id, password_hash, active
+            FROM accounts
+            WHERE email = ?
+            """,
+            (normalized_email,),
+        ).fetchone()
+    if row is None or not bool(row[2]):
+        return None
+    if not verify_password(password, str(row[1])):
+        return None
+
+    token = create_account_session(settings, str(row[0]))
+    account = get_account(settings, str(row[0]))
+    if account is None:
+        return None
+    return token, account
+
+
+def create_account_session(settings: ServerSettings, account_id: str, days: int = 90) -> str:
+    token = _new_account_token()
+    created_at = _utc_now()
+    expires_at = _utc_after(days=days)
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                INSERT INTO account_sessions (
+                    session_id, account_id, token_hash, created_at, expires_at, last_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (uuid4().hex, account_id, account_token_hash(token), created_at, expires_at, created_at),
+            )
+            db.execute(
+                """
+                UPDATE accounts
+                SET last_seen_at = ?
+                WHERE account_id = ?
+                """,
+                (created_at, account_id),
+            )
+    return token
+
+
+def get_account(settings: ServerSettings, account_id: str) -> Account | None:
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT account_id, created_at, updated_at, email, name, premium_license_id,
+                   active, email_confirmed, last_seen_at
+            FROM accounts
+            WHERE account_id = ?
+            """,
+            (account_id.strip(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return _account_from_row(row)
+
+
+def get_account_by_token(settings: ServerSettings, token: str) -> Account | None:
+    token = token.strip()
+    if not token:
+        return None
+    now = _utc_now()
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT a.account_id, a.created_at, a.updated_at, a.email, a.name,
+                   a.premium_license_id, a.active, a.email_confirmed, a.last_seen_at
+            FROM account_sessions s
+            JOIN accounts a ON a.account_id = s.account_id
+            WHERE s.token_hash = ? AND s.expires_at > ? AND a.active = 1
+            """,
+            (account_token_hash(token), now),
+        ).fetchone()
+        if row is None:
+            return None
+        account = _account_from_row(row)
+        with db:
+            db.execute(
+                """
+                UPDATE account_sessions
+                SET last_seen_at = ?
+                WHERE token_hash = ?
+                """,
+                (now, account_token_hash(token)),
+            )
+            db.execute(
+                """
+                UPDATE accounts
+                SET last_seen_at = ?
+                WHERE account_id = ?
+                """,
+                (now, account.account_id),
+            )
+    return get_account(settings, account.account_id)
+
+
+def logout_account(settings: ServerSettings, token: str) -> None:
+    token = token.strip()
+    if not token:
+        return
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute("DELETE FROM account_sessions WHERE token_hash = ?", (account_token_hash(token),))
+
+
+def resolve_premium_license(
+    settings: ServerSettings,
+    premium_key: str | None = None,
+    account_token: str | None = None,
+) -> PremiumLicense | None:
+    if premium_key:
+        return touch_premium_license(settings, premium_key)
+    if account_token:
+        account = get_account_by_token(settings, account_token)
+        if account is None:
+            return None
+        license = get_premium_license(settings, account.premium_license_id)
+        if license is None:
+            return None
+        return touch_premium_license_by_id(settings, license.license_id)
+    return None
+
+
+def touch_premium_license_by_id(settings: ServerSettings, license_id: str) -> PremiumLicense | None:
+    license = get_premium_license(settings, license_id)
+    if license is None:
+        return None
+    seen_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE premium_licenses
+                SET last_seen_at = ?
+                WHERE license_id = ?
+                """,
+                (seen_at, license.license_id),
+            )
+    return get_premium_license(settings, license.license_id)
+
+
+def list_pending_client_actions_for_license(settings: ServerSettings, license_id: str, limit: int = 20) -> list[ClientAction]:
+    limit = max(1, min(limit, 50))
+    with closing(_connect(settings)) as db:
+        rows = db.execute(
+            """
+            SELECT action_id, license_id, created_at, updated_at, action_type, status, message, result_message
+            FROM client_actions
+            WHERE license_id = ? AND status = 'pending'
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (license_id, limit),
+        ).fetchall()
+    return [_client_action_from_row(row) for row in rows]
+
+
+def mark_client_action_for_license(
+    settings: ServerSettings,
+    action_id: str,
+    license_id: str,
+    status: str,
+    result_message: str = "",
+) -> ClientAction:
+    action = get_client_action(settings, action_id)
+    if action is None or action.license_id != license_id:
+        raise ValueError("Client action not found.")
+    if status not in {"done", "declined", "error", "seen"}:
+        raise ValueError("Unsupported client action status.")
+
+    updated_at = _utc_now()
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE client_actions
+                SET updated_at = ?, status = ?, result_message = ?
+                WHERE action_id = ? AND license_id = ?
+                """,
+                (updated_at, status, result_message.strip()[:1000], action.action_id, license_id),
+            )
+    updated = get_client_action(settings, action.action_id)
+    if updated is None:
+        raise RuntimeError("Client action disappeared after update.")
+    return updated
+
+
+def create_account_payment(
+    settings: ServerSettings,
+    account: Account,
+    amount_rub: int,
+    minutes: int,
+    provider: str,
+    description: str = "",
+) -> AccountPayment:
+    amount_rub = max(0, int(amount_rub))
+    minutes = max(0, int(minutes))
+    created_at = _utc_now()
+    payment_id = uuid4().hex
+    provider_order_id = f"golos-{payment_id[:24]}"
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                INSERT INTO account_payments (
+                    payment_id, account_id, license_id, created_at, updated_at, amount_rub,
+                    minutes, currency, status, provider, provider_order_id, provider_payment_id,
+                    payment_url, description, error_code, error_message, paid_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, '', '', ?, '', '', '')
+                """,
+                (
+                    payment_id,
+                    account.account_id,
+                    account.premium_license_id,
+                    created_at,
+                    created_at,
+                    amount_rub,
+                    minutes,
+                    settings.payment_currency,
+                    provider,
+                    provider_order_id,
+                    description.strip(),
+                ),
+            )
+    payment = get_account_payment(settings, payment_id)
+    if payment is None:
+        raise RuntimeError("Payment was not created.")
+    return payment
+
+
+def get_account_payment(settings: ServerSettings, payment_id: str) -> AccountPayment | None:
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT payment_id, account_id, license_id, created_at, updated_at, amount_rub,
+                   minutes, currency, status, provider, provider_order_id, provider_payment_id,
+                   payment_url, description, error_code, error_message, paid_at
+            FROM account_payments
+            WHERE payment_id = ?
+            """,
+            (payment_id.strip(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return _account_payment_from_row(row)
+
+
+def list_account_payments(settings: ServerSettings, account_id: str, limit: int = 20) -> list[AccountPayment]:
+    limit = max(1, min(limit, 100))
+    with closing(_connect(settings)) as db:
+        rows = db.execute(
+            """
+            SELECT payment_id, account_id, license_id, created_at, updated_at, amount_rub,
+                   minutes, currency, status, provider, provider_order_id, provider_payment_id,
+                   payment_url, description, error_code, error_message, paid_at
+            FROM account_payments
+            WHERE account_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (account_id, limit),
+        ).fetchall()
+    return [_account_payment_from_row(row) for row in rows]
+
+
+def set_account_payment_url(settings: ServerSettings, payment_id: str, payment_url: str) -> AccountPayment:
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE account_payments
+                SET updated_at = ?, payment_url = ?
+                WHERE payment_id = ?
+                """,
+                (_utc_now(), payment_url.strip(), payment_id),
+            )
+    payment = get_account_payment(settings, payment_id)
+    if payment is None:
+        raise RuntimeError("Payment disappeared after update.")
+    return payment
+
+
+def mark_account_payment_failed(
+    settings: ServerSettings,
+    payment_id: str,
+    error_code: str,
+    error_message: str,
+    status: str = "failed",
+) -> AccountPayment:
+    if status not in {"failed", "canceled"}:
+        raise ValueError("Unsupported payment failure status.")
+    with closing(_connect(settings)) as db:
+        with db:
+            db.execute(
+                """
+                UPDATE account_payments
+                SET updated_at = ?, status = ?, error_code = ?, error_message = ?
+                WHERE payment_id = ? AND status != 'paid'
+                """,
+                (_utc_now(), status, error_code.strip()[:100], error_message.strip()[:1000], payment_id),
+            )
+    payment = get_account_payment(settings, payment_id)
+    if payment is None:
+        raise RuntimeError("Payment disappeared after failure update.")
+    return payment
+
+
+def find_account_payment_by_order(settings: ServerSettings, provider: str, provider_order_id: str) -> AccountPayment | None:
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT payment_id, account_id, license_id, created_at, updated_at, amount_rub,
+                   minutes, currency, status, provider, provider_order_id, provider_payment_id,
+                   payment_url, description, error_code, error_message, paid_at
+            FROM account_payments
+            WHERE provider = ? AND provider_order_id = ?
+            """,
+            (provider, provider_order_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return _account_payment_from_row(row)
+
+
+def account_payment_operation_exists(settings: ServerSettings, provider: str, provider_payment_id: str) -> bool:
+    if not provider_payment_id:
+        return False
+    with closing(_connect(settings)) as db:
+        row = db.execute(
+            """
+            SELECT payment_id
+            FROM account_payments
+            WHERE provider = ? AND provider_payment_id = ?
+            """,
+            (provider, provider_payment_id),
+        ).fetchone()
+    return row is not None
+
+
+def apply_paid_account_payment(
+    settings: ServerSettings,
+    payment_id: str,
+    provider_payment_id: str = "",
+) -> tuple[bool, AccountPayment]:
+    payment = get_account_payment(settings, payment_id)
+    if payment is None:
+        raise ValueError("Payment not found.")
+    if payment.status == "paid":
+        return False, payment
+
+    paid_at = _utc_now()
+    seconds = max(0, payment.minutes) * 60
+    with closing(_connect(settings)) as db:
+        with db:
+            cursor = db.execute(
+                """
+                UPDATE account_payments
+                SET updated_at = ?, status = 'paid', provider_payment_id = ?, paid_at = ?
+                WHERE payment_id = ? AND status != 'paid'
+                """,
+                (paid_at, provider_payment_id.strip(), paid_at, payment.payment_id),
+            )
+            applied = cursor.rowcount == 1
+            if applied:
+                db.execute(
+                    """
+                    UPDATE premium_licenses
+                    SET updated_at = ?,
+                        balance_seconds = balance_seconds + ?,
+                        total_granted_seconds = total_granted_seconds + ?,
+                        total_amount_rub = total_amount_rub + ?
+                    WHERE license_id = ?
+                    """,
+                    (paid_at, seconds, seconds, payment.amount_rub, payment.license_id),
+                )
+                _insert_premium_ledger(
+                    db,
+                    payment.license_id,
+                    "payment",
+                    seconds,
+                    payment.amount_rub,
+                    f"Оплата {payment.payment_id}",
+                )
+    updated = get_account_payment(settings, payment.payment_id)
+    if updated is None:
+        raise RuntimeError("Payment disappeared after paid update.")
+    return applied, updated
 
 
 def create_client_action(settings: ServerSettings, license_id: str, action_type: str, message: str = "") -> ClientAction:
@@ -665,6 +1223,42 @@ def _client_action_from_row(row: tuple[object, ...]) -> ClientAction:
     )
 
 
+def _account_from_row(row: tuple[object, ...]) -> Account:
+    return Account(
+        account_id=str(row[0]),
+        created_at=str(row[1]),
+        updated_at=str(row[2]),
+        email=str(row[3]),
+        name=str(row[4]),
+        premium_license_id=str(row[5]),
+        active=bool(row[6]),
+        email_confirmed=bool(row[7]),
+        last_seen_at=str(row[8]),
+    )
+
+
+def _account_payment_from_row(row: tuple[object, ...]) -> AccountPayment:
+    return AccountPayment(
+        payment_id=str(row[0]),
+        account_id=str(row[1]),
+        license_id=str(row[2]),
+        created_at=str(row[3]),
+        updated_at=str(row[4]),
+        amount_rub=int(row[5]),
+        minutes=int(row[6]),
+        currency=str(row[7]),
+        status=str(row[8]),
+        provider=str(row[9]),
+        provider_order_id=str(row[10]),
+        provider_payment_id=str(row[11]),
+        payment_url=str(row[12]),
+        description=str(row[13]),
+        error_code=str(row[14]),
+        error_message=str(row[15]),
+        paid_at=str(row[16]),
+    )
+
+
 def _insert_premium_ledger(
     db: sqlite3.Connection,
     license_id: str,
@@ -688,5 +1282,42 @@ def _new_premium_key() -> str:
     return f"golos_{secrets.token_urlsafe(24)}"
 
 
+def _new_account_token() -> str:
+    return f"golos_session_{secrets.token_urlsafe(32)}"
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def account_token_hash(token: str) -> str:
+    return hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+
+
+def hash_password(password: str) -> str:
+    iterations = 260_000
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_text, salt_hex, digest_hex = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_text)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(digest_hex)
+    except (ValueError, TypeError):
+        return False
+    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return secrets.compare_digest(actual, expected)
+
+
 def _utc_now() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+def _utc_after(days: int) -> str:
+    return (datetime.utcnow() + timedelta(days=max(1, int(days)))).isoformat(timespec="seconds") + "Z"

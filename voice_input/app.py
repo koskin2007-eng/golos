@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+from voice_input.account import account_token_from_env
 from voice_input.config import AppConfig, ConfigManager
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.env_file import default_env_path
@@ -22,7 +23,7 @@ from voice_input.logger import DEFAULT_LOG_PATH, setup_logging
 from voice_input.hotkey import PushToTalkHotkey
 from voice_input.paste import TextPaster
 from voice_input.paths import resolve_runtime_path, runtime_base_dir
-from voice_input.premium import premium_key_from_env
+from voice_input.premium import premium_key_exists, premium_key_from_env
 from voice_input.recorder import AudioRecorder, RecordingResult
 from voice_input.remote_actions import complete_remote_action, fetch_remote_actions
 from voice_input.restart import clear_restart_request, restart_request_path
@@ -226,7 +227,7 @@ class VoiceInputApp:
         threading.Thread(target=worker, name="update-install-request-watcher", daemon=True).start()
 
     def _start_remote_action_watcher(self) -> None:
-        if not self.config.premium.server_url.strip() or not premium_key_from_env(self.config.premium):
+        if not self.config.premium.server_url.strip() or not premium_key_exists(self.config.premium):
             return
 
         def worker() -> None:
@@ -314,7 +315,7 @@ class VoiceInputApp:
             self.logger.info(
                 "Backend selected backend=premium_proxy server=%s license_key_present=%s",
                 self.config.premium.server_url,
-                bool(premium_key_from_env(self.config.premium)),
+                premium_key_exists(self.config.premium),
             )
         else:
             self.logger.warning("Unknown backend in config backend=%s", backend)
@@ -461,8 +462,8 @@ class VoiceInputApp:
             self._notify("Голос", "OPENAI_API_KEY не найден. Использую local_fast.")
             backend = "local_fast"
         if backend == "premium_proxy" and not PremiumProxyTranscriber.has_license_key(self.config.premium):
-            self.logger.error("GOLOS_PREMIUM_KEY is not set; falling back to local_fast")
-            self._notify("Голос", "Премиум-ключ Голос не найден. Использую local_fast.")
+            self.logger.error("Premium access is not configured; falling back to local_fast")
+            self._notify("Голос", "Войдите в аккаунт Голос или сохраните премиум-ключ. Использую local_fast.")
             backend = "local_fast"
         return self._get_transcriber(backend)
 
@@ -532,7 +533,10 @@ class VoiceInputApp:
         package = create_support_package(self.config_manager.path, self.log_path)
         server_url = self.config.support.server_url.strip()
         premium_key = premium_key_from_env(self.config.premium)
+        account_token = account_token_from_env()
         if not server_url and premium_key:
+            server_url = self.config.premium.server_url.strip()
+        if not server_url and account_token:
             server_url = self.config.premium.server_url.strip()
         if server_url:
             result = upload_support_package(
@@ -541,6 +545,7 @@ class VoiceInputApp:
                 support_token_from_env(self.config.support.token_env),
                 metadata={"profile": self.config.recognition_profile, "backend": self.config.backend},
                 premium_key=premium_key,
+                account_token=account_token,
             )
             self.logger.info("Support diagnostics uploaded report_id=%s message=%s", result.report_id, result.message)
             self._notify("Голос", result.message)
@@ -725,12 +730,19 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.prepare_support_request:
             package = create_support_package(config_manager.path, resolve_runtime_path(DEFAULT_LOG_PATH))
-            if config.support.server_url.strip():
+            support_server_url = config.support.server_url.strip()
+            premium_key = premium_key_from_env(config.premium)
+            account_token = account_token_from_env()
+            if not support_server_url and (premium_key or account_token):
+                support_server_url = config.premium.server_url.strip()
+            if support_server_url:
                 result = upload_support_package(
                     package,
-                    config.support.server_url,
+                    support_server_url,
                     support_token_from_env(config.support.token_env),
                     metadata={"profile": config.recognition_profile, "backend": config.backend},
+                    premium_key=premium_key,
+                    account_token=account_token,
                 )
                 logger.info("Support diagnostics uploaded report_id=%s message=%s", result.report_id, result.message)
                 print(f"Diagnostics uploaded: {result.message}")
@@ -740,7 +752,7 @@ def main(argv: list[str] | None = None) -> int:
                 logger.info("Support request prepared archive=%s issue_body=%s", package.archive_path, package.issue_body_path)
             print(f"Diagnostics saved: {package.archive_path}")
             print(f"Issue text saved: {package.issue_body_path}")
-            if not config.support.server_url.strip():
+            if not support_server_url:
                 print(f"GitHub issue URL: {package.issue_url}")
             return 0
 

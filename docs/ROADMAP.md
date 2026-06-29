@@ -18,6 +18,7 @@ The first settings window exists and covers common user settings. It should grow
 Add a small Windows settings window with four tabs:
 
 - Main: hotkey, active language, autostart, current status.
+- Account: email login/register, balance, top-up.
 - Recognition: profile selection (`tiny`, `base`, `small`), backend, model.
 - Diagnostics: open log, collect diagnostics zip, copy version info.
 - Updates: current version, update channel, check for update, install update.
@@ -103,6 +104,10 @@ Current implementation:
 
 - `support_server/` FastAPI app;
 - `GET /health`;
+- `POST /api/account/register`;
+- `POST /api/account/login`;
+- `GET /api/account/me`;
+- `POST /api/account/payments`;
 - `POST /api/diagnostics`;
 - `POST /api/events`;
 - `GET /api/update`;
@@ -114,7 +119,28 @@ Current implementation:
 - optional Bearer token through `GOLOS_SUPPORT_TOKEN`;
 - desktop app can upload diagnostics when `support.server_url` is configured.
 - premium profile can transcribe through the server and charge the user's minute balance.
+- desktop settings can sign in to an account, show balance, and start a top-up payment.
+- account token can authorize premium transcription without manual premium-key entry.
 - admin can queue safe support actions, limited to diagnostics request and update suggestion.
+
+## Monetization / Account
+
+Current direction:
+
+- keep local recognition free;
+- keep user's own OpenAI key as an advanced local option;
+- sell `Голос Премиум` minutes through the in-app account;
+- do not collect card data in the desktop app;
+- redirect payment to YooMoney first, later to a contracted provider such as T-Bank/YooKassa if needed;
+- do not make Telegram part of the client account flow.
+
+Next account steps:
+
+1. Deploy account/payment server code.
+2. Configure YooMoney env variables and test a real webhook.
+3. Add email confirmation and password reset.
+4. Add SMS only after choosing a provider and pricing.
+5. Add receipts/legal offer text before public paid launch.
 
 ## Browser extension idea
 

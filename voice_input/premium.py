@@ -5,6 +5,7 @@ import os
 import urllib.request
 from dataclasses import dataclass
 
+from voice_input.account import account_auth_headers, account_token_exists
 from voice_input.config import PremiumSettings
 from voice_input.env_file import default_env_path, env_value_exists, read_env_value
 
@@ -23,7 +24,7 @@ class PremiumBalance:
 
 
 def premium_key_exists(settings: PremiumSettings) -> bool:
-    return bool(premium_key_from_env(settings))
+    return bool(premium_key_from_env(settings)) or account_token_exists()
 
 
 def premium_key_from_env(settings: PremiumSettings) -> str:
@@ -33,7 +34,14 @@ def premium_key_from_env(settings: PremiumSettings) -> str:
 
 def premium_env_value_exists(settings: PremiumSettings) -> bool:
     env_name = settings.license_key_env.strip() or PREMIUM_KEY_NAME
-    return env_value_exists(default_env_path(), env_name) or bool(os.getenv(env_name))
+    return env_value_exists(default_env_path(), env_name) or bool(os.getenv(env_name)) or account_token_exists()
+
+
+def premium_auth_headers(settings: PremiumSettings) -> dict[str, str]:
+    key = premium_key_from_env(settings)
+    if key:
+        return {"X-Golos-Premium-Key": key}
+    return account_auth_headers()
 
 
 def normalize_premium_key(value: str, env_name: str = PREMIUM_KEY_NAME) -> str:
@@ -52,13 +60,13 @@ def check_premium_balance(settings: PremiumSettings, license_key: str | None = N
     if not server_url:
         raise RuntimeError("Адрес сервера Голос Премиум не указан.")
 
-    key = license_key or premium_key_from_env(settings)
-    if not key:
-        raise RuntimeError("Премиум-ключ Голос не сохранён.")
+    headers = {"X-Golos-Premium-Key": license_key} if license_key else premium_auth_headers(settings)
+    if not headers:
+        raise RuntimeError("Войдите в аккаунт Голос или сохраните премиум-ключ.")
 
     request = urllib.request.Request(
         server_url.rstrip("/") + "/api/premium/balance",
-        headers={"X-Golos-Premium-Key": key},
+        headers=headers,
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=30) as response:

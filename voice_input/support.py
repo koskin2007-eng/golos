@@ -47,6 +47,7 @@ def upload_support_package(
     token: str | None = None,
     metadata: dict[str, str] | None = None,
     premium_key: str | None = None,
+    account_token: str | None = None,
 ) -> SupportUploadResult:
     url = server_url.rstrip("/") + "/api/diagnostics"
     fields = {
@@ -61,6 +62,8 @@ def upload_support_package(
         headers["Authorization"] = f"Bearer {token}"
     if premium_key:
         headers["X-Golos-Premium-Key"] = premium_key
+    if account_token:
+        headers["X-Golos-Account-Token"] = account_token
 
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=120) as response:

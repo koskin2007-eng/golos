@@ -58,6 +58,14 @@ cd /opt/golos-support
 The public landing page is available at `/`.
 The HTML admin page is available at `/admin/login` and requires the admin username and password before diagnostics or premium keys are shown.
 
+In-app account and payment MVP:
+
+- desktop app signs in through `/api/account/login`;
+- account token can authorize `/api/premium/balance`, `/api/premium/transcribe`, `/api/client/actions`, and diagnostics upload;
+- `/api/account/payments` creates a top-up payment;
+- default `GOLOS_PAYMENTS_MODE=mock` allows safe local tests;
+- YooMoney can be enabled on production through environment variables.
+
 Do not commit server env files, support tokens, diagnostic archives, SQLite data, SSH keys, or production backups.
 
 Минимальный сервер поддержки для проекта "Голос".
@@ -68,6 +76,11 @@ Do not commit server env files, support tokens, diagnostic archives, SQLite data
 - `POST /api/diagnostics` - принимает diagnostic ZIP от приложения.
 - `POST /api/events` - принимает технические события.
 - `GET /api/update` - отдаёт `latest.json` из локального файла или проксирует публичный GitHub Release.
+- `POST /api/account/register` - создаёт аккаунт клиента и внутреннюю премиум-лицензию.
+- `POST /api/account/login` - выдаёт сессионный токен для приложения.
+- `GET /api/account/me` - возвращает профиль и баланс.
+- `POST /api/account/payments` - создаёт платёж на пополнение минут.
+- `POST /payments/yoomoney/webhook` - принимает подтверждение оплаты YooMoney.
 - `GET /api/premium/balance` - проверяет премиум-ключ и баланс минут.
 - `POST /api/premium/transcribe` - распознаёт WAV через серверный OpenAI API и списывает секунды.
 - `GET /api/client/actions` - отдаёт безопасные запросы поддержки клиенту.
@@ -94,6 +107,14 @@ http://127.0.0.1:8765/health
 - `GOLOS_PUBLIC_LATEST_JSON_URL` - публичный fallback `latest.json`.
 - `OPENAI_API_KEY` - серверный ключ OpenAI для премиум-распознавания; не нужен обычному клиенту.
 - `GOLOS_PREMIUM_TRANSCRIBE_MODEL` - модель OpenAI для премиум-распознавания, по умолчанию `gpt-4o-mini-transcribe`.
+- `GOLOS_PUBLIC_APP_URL` - публичный адрес сервера, по умолчанию `https://golos.msgcrm.ru`.
+- `GOLOS_PAYMENTS_MODE` - `mock` для тестов или боевой режим провайдера, по умолчанию `mock`.
+- `GOLOS_PAYMENTS_PROVIDER` - провайдер платежей, сейчас `yoomoney`.
+- `GOLOS_PAYMENT_DEFAULT_AMOUNT_RUB` - сумма пополнения по умолчанию, сейчас `100`.
+- `GOLOS_PAYMENT_MIN_AMOUNT_RUB` / `GOLOS_PAYMENT_MAX_AMOUNT_RUB` - допустимый диапазон пополнения.
+- `GOLOS_PREMIUM_MINUTES_PER_100_RUB` - сколько минут начислять за 100 рублей, сейчас `180`.
+- `GOLOS_YOOMONEY_RECEIVER` - получатель YooMoney.
+- `GOLOS_YOOMONEY_NOTIFICATION_SECRET` - секрет проверки webhook YooMoney.
 
 ## Подключение приложения
 
@@ -113,13 +134,20 @@ GOLOS_SUPPORT_TOKEN=...
 
 Если `support.server_url` пустой, приложение продолжит открывать GitHub Issue и папку с diagnostic ZIP.
 
-Для премиум-режима приложение хранит ключ клиента локально в `.env`:
+Для нового премиум-режима приложение хранит сессионный токен аккаунта локально в `.env`:
+
+```text
+GOLOS_ACCOUNT_EMAIL=...
+GOLOS_ACCOUNT_TOKEN=...
+```
+
+Старый ручной вариант с премиум-ключом остаётся для совместимости:
 
 ```text
 GOLOS_PREMIUM_KEY=...
 ```
 
-Ключ используется для `/api/premium/balance`, `/api/premium/transcribe`, безопасных client actions и загрузки диагностики без выдачи пользователю служебного `GOLOS_SUPPORT_TOKEN`.
+Аккаунт-токен или премиум-ключ используется для `/api/premium/balance`, `/api/premium/transcribe`, безопасных client actions и загрузки диагностики без выдачи пользователю служебного `GOLOS_SUPPORT_TOKEN`.
 
 ## Безопасность
 

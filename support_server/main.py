@@ -10,29 +10,50 @@ from pathlib import Path
 from secrets import compare_digest
 
 from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from support_server.settings import ServerSettings, load_settings
 from support_server.storage import (
+    Account,
+    AccountPayment,
     DiagnosticReport,
     PremiumLicense,
+    account_payment_operation_exists,
+    apply_paid_account_payment,
+    authenticate_account,
     charge_premium_seconds,
+    create_account,
+    create_account_payment,
     create_client_action,
     create_premium_license,
+    find_account_payment_by_order,
+    get_account_by_token,
     get_diagnostic_report,
+    get_account_payment,
     get_premium_license,
     grant_premium_minutes,
     init_storage,
-    list_pending_client_actions,
+    list_account_payments,
+    list_pending_client_actions_for_license,
     list_diagnostic_reports,
     list_premium_licenses,
     load_update_payload,
-    mark_client_action,
+    logout_account,
+    mark_client_action_for_license,
+    mark_account_payment_failed,
     record_event,
+    resolve_premium_license,
     resolve_report_archive,
     save_diagnostic_report,
     set_premium_license_active,
-    touch_premium_license,
+    set_account_payment_url,
+)
+from support_server.yoomoney import (
+    YOOMONEY_PROVIDER,
+    build_yoomoney_payment_form,
+    validate_yoomoney_payment_payload,
+    verify_yoomoney_notification,
+    yoomoney_is_configured,
 )
 from voice_input.version import APP_VERSION as DESKTOP_APP_VERSION
 from voice_input.version import GITHUB_REPOSITORY
@@ -64,6 +85,189 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             return load_update_payload(server_settings)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"Update metadata unavailable: {exc}") from exc
+
+    @app.post("/api/account/register")
+    async def account_register(request: Request) -> dict[str, object]:
+        payload = await _read_json_object(request)
+        try:
+            token, account = create_account(
+                server_settings,
+                str(payload.get("email") or ""),
+                str(payload.get("password") or ""),
+                str(payload.get("name") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        license = get_premium_license(server_settings, account.premium_license_id)
+        return {
+            "ok": True,
+            "account_token": token,
+            "account": _account_payload(account, license),
+        }
+
+    @app.post("/api/account/login")
+    async def account_login(request: Request) -> dict[str, object]:
+        payload = await _read_json_object(request)
+        result = authenticate_account(
+            server_settings,
+            str(payload.get("email") or ""),
+            str(payload.get("password") or ""),
+        )
+        if result is None:
+            raise HTTPException(status_code=401, detail="Неверный email или пароль.")
+        token, account = result
+        license = get_premium_license(server_settings, account.premium_license_id)
+        return {
+            "ok": True,
+            "account_token": token,
+            "account": _account_payload(account, license),
+        }
+
+    @app.get("/api/account/me")
+    def account_me(x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token")) -> dict[str, object]:
+        account = _require_account(server_settings, x_golos_account_token)
+        license = get_premium_license(server_settings, account.premium_license_id)
+        payments = list_account_payments(server_settings, account.account_id, limit=10)
+        return {
+            "ok": True,
+            "account": _account_payload(account, license),
+            "payments": [_payment_payload(payment) for payment in payments],
+        }
+
+    @app.post("/api/account/logout")
+    def account_logout(x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token")) -> dict[str, object]:
+        if x_golos_account_token:
+            logout_account(server_settings, x_golos_account_token)
+        return {"ok": True}
+
+    @app.post("/api/account/payments")
+    async def account_create_payment(
+        request: Request,
+        x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token"),
+    ) -> dict[str, object]:
+        account = _require_account(server_settings, x_golos_account_token)
+        payload = await _read_json_object(request)
+        amount_rub = _safe_int(payload.get("amount_rub"), server_settings.payment_default_amount_rub)
+        if amount_rub < server_settings.payment_min_amount_rub or amount_rub > server_settings.payment_max_amount_rub:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Введите сумму от {server_settings.payment_min_amount_rub} до {server_settings.payment_max_amount_rub} руб.",
+            )
+        provider = "mock" if server_settings.payments_mode == "mock" else server_settings.payments_provider
+        payment = create_account_payment(
+            server_settings,
+            account,
+            amount_rub=amount_rub,
+            minutes=_payment_minutes_for_amount(server_settings, amount_rub),
+            provider=provider,
+            description=f"Голос Премиум: {amount_rub} руб.",
+        )
+        if server_settings.payments_mode == "mock":
+            payment = set_account_payment_url(server_settings, payment.payment_id, f"/account/payments/{payment.payment_id}")
+            return {"ok": True, "payment": _payment_payload(payment)}
+
+        if provider == YOOMONEY_PROVIDER:
+            if not yoomoney_is_configured(server_settings):
+                payment = mark_account_payment_failed(
+                    server_settings,
+                    payment.payment_id,
+                    "yoomoney_not_configured",
+                    "Онлайн-оплата YooMoney ещё не включена. Попробуйте позже или напишите в поддержку.",
+                )
+                return {"ok": False, "payment": _payment_payload(payment)}
+            payment = set_account_payment_url(
+                server_settings,
+                payment.payment_id,
+                f"/account/payments/{payment.payment_id}/yoomoney",
+            )
+            return {"ok": True, "payment": _payment_payload(payment)}
+
+        payment = mark_account_payment_failed(
+            server_settings,
+            payment.payment_id,
+            "payment_provider_pending",
+            "Онлайн-оплата временно настраивается.",
+        )
+        return {"ok": False, "payment": _payment_payload(payment)}
+
+    @app.get("/account/payments/{payment_id}", response_class=HTMLResponse)
+    def account_payment_detail(payment_id: str):
+        payment = get_account_payment(server_settings, payment_id)
+        if payment is None:
+            raise HTTPException(status_code=404, detail="Payment not found.")
+        return HTMLResponse(_account_payment_detail_html(server_settings, payment))
+
+    @app.get("/account/payments/{payment_id}/yoomoney", response_class=HTMLResponse)
+    def account_payment_yoomoney(payment_id: str):
+        payment = get_account_payment(server_settings, payment_id)
+        if payment is None:
+            raise HTTPException(status_code=404, detail="Payment not found.")
+        if payment.provider != YOOMONEY_PROVIDER or payment.status != "pending":
+            return RedirectResponse(f"/account/payments/{payment.payment_id}", status_code=303)
+        try:
+            payment_form = build_yoomoney_payment_form(payment, server_settings)
+        except ValueError:
+            mark_account_payment_failed(
+                server_settings,
+                payment.payment_id,
+                "yoomoney_not_configured",
+                "Онлайн-оплата YooMoney ещё не включена.",
+            )
+            return RedirectResponse(f"/account/payments/{payment.payment_id}", status_code=303)
+        return HTMLResponse(_yoomoney_payment_html(payment, payment_form.action_url, payment_form.fields))
+
+    @app.post("/account/payments/{payment_id}/mock-success", response_class=HTMLResponse)
+    def account_payment_mock_success(payment_id: str):
+        if server_settings.payments_mode != "mock":
+            raise HTTPException(status_code=404, detail="Not found.")
+        try:
+            apply_paid_account_payment(server_settings, payment_id, provider_payment_id=f"mock-{payment_id[:12]}")
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return RedirectResponse(f"/account/payments/{payment_id}", status_code=303)
+
+    @app.post("/account/payments/{payment_id}/mock-fail", response_class=HTMLResponse)
+    def account_payment_mock_fail(payment_id: str):
+        if server_settings.payments_mode != "mock":
+            raise HTTPException(status_code=404, detail="Not found.")
+        mark_account_payment_failed(server_settings, payment_id, "mock_failed", "Тестовая ошибка оплаты.")
+        return RedirectResponse(f"/account/payments/{payment_id}", status_code=303)
+
+    @app.post("/payments/yoomoney/webhook")
+    async def yoomoney_webhook(request: Request):
+        if not yoomoney_is_configured(server_settings):
+            return Response("yoomoney_not_configured", status_code=503)
+        form = await request.form()
+        payload = {key: str(value) for key, value in form.items()}
+        if not verify_yoomoney_notification(payload, server_settings.yoomoney_notification_secret):
+            return Response("invalid_sign", status_code=403)
+
+        provider_order_id = payload.get("label") or ""
+        operation_id = payload.get("operation_id") or ""
+        if not provider_order_id or not operation_id:
+            return Response("ignored_missing_required_fields", status_code=200)
+        if account_payment_operation_exists(server_settings, YOOMONEY_PROVIDER, operation_id):
+            return Response("duplicate_operation", status_code=200)
+
+        payment = find_account_payment_by_order(server_settings, YOOMONEY_PROVIDER, provider_order_id)
+        if payment is None:
+            return Response("ignored_payment_not_found", status_code=200)
+        validation_error = validate_yoomoney_payment_payload(
+            payload,
+            expected_label=payment.provider_order_id,
+            expected_amount_rub=payment.amount_rub,
+        )
+        if validation_error:
+            mark_account_payment_failed(
+                server_settings,
+                payment.payment_id,
+                validation_error,
+                "YooMoney вернул платёж с параметрами, которые не прошли проверку.",
+            )
+            return Response(validation_error, status_code=400)
+
+        apply_paid_account_payment(server_settings, payment.payment_id, provider_payment_id=operation_id)
+        return Response("OK", status_code=200)
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_root(golos_admin_token: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME)):
@@ -245,12 +449,13 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         return HTMLResponse(_premium_admin_html(licenses, message="Запрос для клиента поставлен в очередь."))
 
     @app.get("/api/premium/balance")
-    def premium_balance(x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key")) -> dict[str, object]:
-        if not x_golos_premium_key:
-            raise HTTPException(status_code=401, detail="Premium key is required.")
-        license = touch_premium_license(server_settings, x_golos_premium_key)
+    def premium_balance(
+        x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+        x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token"),
+    ) -> dict[str, object]:
+        license = resolve_premium_license(server_settings, x_golos_premium_key, x_golos_account_token)
         if license is None or not license.active:
-            raise HTTPException(status_code=401, detail="Premium key is invalid.")
+            raise HTTPException(status_code=401, detail="Premium access is invalid.")
         return _premium_license_payload(license)
 
     @app.post("/api/premium/transcribe")
@@ -259,12 +464,11 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         language: str = Form("ru"),
         duration_seconds: str = Form("0"),
         x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+        x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token"),
     ) -> dict[str, object]:
-        if not x_golos_premium_key:
-            raise HTTPException(status_code=401, detail="Premium key is required.")
-        license = touch_premium_license(server_settings, x_golos_premium_key)
+        license = resolve_premium_license(server_settings, x_golos_premium_key, x_golos_account_token)
         if license is None or not license.active:
-            raise HTTPException(status_code=401, detail="Premium key is invalid.")
+            raise HTTPException(status_code=401, detail="Premium access is invalid.")
 
         content = await file.read(server_settings.max_upload_bytes + 1)
         if len(content) > server_settings.max_upload_bytes:
@@ -295,13 +499,14 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         }
 
     @app.get("/api/client/actions")
-    def client_actions(x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key")) -> dict[str, object]:
-        if not x_golos_premium_key:
-            raise HTTPException(status_code=401, detail="Premium key is required.")
-        license = touch_premium_license(server_settings, x_golos_premium_key)
+    def client_actions(
+        x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+        x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token"),
+    ) -> dict[str, object]:
+        license = resolve_premium_license(server_settings, x_golos_premium_key, x_golos_account_token)
         if license is None or not license.active:
-            raise HTTPException(status_code=401, detail="Premium key is invalid.")
-        actions = list_pending_client_actions(server_settings, x_golos_premium_key)
+            raise HTTPException(status_code=401, detail="Premium access is invalid.")
+        actions = list_pending_client_actions_for_license(server_settings, license.license_id)
         return {
             "ok": True,
             "actions": [
@@ -320,17 +525,19 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         action_id: str,
         request: Request,
         x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+        x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token"),
     ) -> dict[str, object]:
-        if not x_golos_premium_key:
-            raise HTTPException(status_code=401, detail="Premium key is required.")
+        license = resolve_premium_license(server_settings, x_golos_premium_key, x_golos_account_token)
+        if license is None or not license.active:
+            raise HTTPException(status_code=401, detail="Premium access is invalid.")
         payload = await request.json()
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="JSON object expected.")
         try:
-            action = mark_client_action(
+            action = mark_client_action_for_license(
                 server_settings,
                 action_id,
-                x_golos_premium_key,
+                license.license_id,
                 str(payload.get("status") or "done"),
                 str(payload.get("message") or ""),
             )
@@ -364,8 +571,9 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         notes: str = Form(""),
         authorization: str | None = Header(default=None),
         x_golos_premium_key: str | None = Header(default=None, alias="X-Golos-Premium-Key"),
+        x_golos_account_token: str | None = Header(default=None, alias="X-Golos-Account-Token"),
     ) -> JSONResponse:
-        _require_upload_auth(server_settings, authorization, x_golos_premium_key)
+        _require_upload_auth(server_settings, authorization, x_golos_premium_key, x_golos_account_token)
         content = await file.read(server_settings.max_upload_bytes + 1)
         metadata = {
             "installation_id": installation_id,
@@ -394,6 +602,71 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     return app
 
 
+async def _read_json_object(request: Request) -> dict[str, object]:
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="JSON object expected.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object expected.")
+    return payload
+
+
+def _require_account(settings: ServerSettings, account_token: str | None) -> Account:
+    if not account_token:
+        raise HTTPException(status_code=401, detail="Account token is required.")
+    account = get_account_by_token(settings, account_token)
+    if account is None:
+        raise HTTPException(status_code=401, detail="Account session is invalid.")
+    return account
+
+
+def _account_payload(account: Account, license: PremiumLicense | None) -> dict[str, object]:
+    balance_seconds = license.balance_seconds if license else 0
+    total_granted_seconds = license.total_granted_seconds if license else 0
+    total_used_seconds = license.total_used_seconds if license else 0
+    return {
+        "account_id": account.account_id,
+        "email": account.email,
+        "name": account.name,
+        "active": account.active,
+        "email_confirmed": account.email_confirmed,
+        "premium_license_id": account.premium_license_id,
+        "balance_seconds": balance_seconds,
+        "balance_minutes": round(balance_seconds / 60, 2),
+        "total_granted_minutes": round(total_granted_seconds / 60, 2),
+        "total_used_minutes": round(total_used_seconds / 60, 2),
+    }
+
+
+def _payment_payload(payment: AccountPayment) -> dict[str, object]:
+    return {
+        "payment_id": payment.payment_id,
+        "amount_rub": payment.amount_rub,
+        "minutes": payment.minutes,
+        "currency": payment.currency,
+        "status": payment.status,
+        "provider": payment.provider,
+        "payment_url": payment.payment_url,
+        "description": payment.description,
+        "error_code": payment.error_code,
+        "error_message": payment.error_message,
+        "created_at": payment.created_at,
+        "paid_at": payment.paid_at,
+    }
+
+
+def _payment_minutes_for_amount(settings: ServerSettings, amount_rub: int) -> int:
+    return max(1, round(int(amount_rub) * settings.premium_minutes_per_100_rub / 100))
+
+
+def _safe_int(value: object, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def _require_auth(settings: ServerSettings, authorization: str | None) -> None:
     if not settings.support_token:
         return
@@ -402,15 +675,19 @@ def _require_auth(settings: ServerSettings, authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized.")
 
 
-def _require_upload_auth(settings: ServerSettings, authorization: str | None, premium_key: str | None) -> None:
+def _require_upload_auth(
+    settings: ServerSettings,
+    authorization: str | None,
+    premium_key: str | None,
+    account_token: str | None = None,
+) -> None:
     if settings.support_token:
         expected = f"Bearer {settings.support_token}"
         if authorization == expected:
             return
-        if premium_key:
-            license = touch_premium_license(settings, premium_key)
-            if license is not None and license.active:
-                return
+        license = resolve_premium_license(settings, premium_key, account_token)
+        if license is not None and license.active:
+            return
         raise HTTPException(status_code=401, detail="Unauthorized.")
 
 
@@ -768,6 +1045,113 @@ def _admin_layout(title: str, body: str, show_logout: bool = True) -> str:
     {logout_html}
   </header>
   <main>{body}</main>
+</body>
+</html>"""
+
+
+def _account_payment_detail_html(settings: ServerSettings, payment: AccountPayment) -> str:
+    status_label = {
+        "pending": "Ожидает оплаты",
+        "paid": "Оплачен",
+        "failed": "Ошибка оплаты",
+        "canceled": "Отменён",
+    }.get(payment.status, payment.status)
+    error_html = f'<div class="error">{escape(payment.error_message)}</div>' if payment.error_message else ""
+    if settings.payments_mode == "mock" and payment.status == "pending":
+        action_html = f"""
+        <div class="actions">
+          <form method="post" action="/account/payments/{escape(payment.payment_id)}/mock-success">
+            <button type="submit">Тест: оплатить успешно</button>
+          </form>
+          <form method="post" action="/account/payments/{escape(payment.payment_id)}/mock-fail">
+            <button class="secondary" type="submit">Тест: ошибка оплаты</button>
+          </form>
+        </div>
+"""
+    elif payment.payment_url and payment.status == "pending":
+        action_html = f'<p><a class="button" href="{escape(payment.payment_url)}">Перейти к оплате</a></p>'
+    else:
+        action_html = ""
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Платёж Голос</title>
+  <style>
+    :root {{ --bg:#f7faf4; --panel:#fff; --ink:#172112; --muted:#607052; --green:#167a3c; --line:#d8e6c8; --yellow:#facc15; }}
+    body {{ margin:0; font-family:Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--ink); }}
+    main {{ max-width:720px; margin:0 auto; padding:36px 18px; }}
+    .panel {{ background:var(--panel); border:1px solid var(--line); padding:24px; }}
+    h1 {{ margin:0 0 12px; font-size:30px; }}
+    .muted {{ color:var(--muted); }}
+    .detail-list {{ display:grid; gap:10px; margin:20px 0; }}
+    .detail-list div {{ display:flex; justify-content:space-between; gap:18px; border-bottom:1px solid var(--line); padding-bottom:10px; }}
+    .button, button {{ display:inline-block; background:var(--green); color:#fff; border:1px solid #0f6630; padding:11px 16px; font-weight:700; text-decoration:none; cursor:pointer; }}
+    button.secondary {{ background:#fff7c2; color:var(--ink); border-color:#e2c94f; }}
+    .actions {{ display:flex; gap:10px; flex-wrap:wrap; }}
+    .error {{ background:#fff2f2; border:1px solid #f3b7b7; padding:10px 12px; margin:14px 0; }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <p class="muted">Платёж #{escape(payment.payment_id[:12])}</p>
+      <h1>{escape(status_label)}</h1>
+      <div class="detail-list">
+        <div><span>Сумма</span><strong>{int(payment.amount_rub)} {escape(payment.currency)}</strong></div>
+        <div><span>Минуты Голос Премиум</span><strong>{int(payment.minutes)} мин.</strong></div>
+        <div><span>Провайдер</span><strong>{escape("Тестовый режим" if settings.payments_mode == "mock" else payment.provider)}</strong></div>
+      </div>
+      {error_html}
+      {action_html}
+      <p class="muted">После успешной оплаты вернитесь в программу Голос и нажмите «Обновить баланс».</p>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def _yoomoney_payment_html(payment: AccountPayment, action_url: str, fields: dict[str, str]) -> str:
+    hidden_fields = "\n".join(
+        f'<input type="hidden" name="{escape(name)}" value="{escape(value)}">'
+        for name, value in fields.items()
+    )
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Переход к оплате Голос</title>
+  <style>
+    body {{ margin:0; font-family:Segoe UI, Arial, sans-serif; background:#f7faf4; color:#172112; }}
+    main {{ max-width:680px; margin:0 auto; padding:36px 18px; }}
+    section {{ background:#fff; border:1px solid #d8e6c8; padding:24px; }}
+    button {{ background:#167a3c; color:#fff; border:1px solid #0f6630; padding:11px 16px; font-weight:700; cursor:pointer; }}
+    .muted {{ color:#607052; }}
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <p class="muted">Платёж #{escape(payment.payment_id[:12])}</p>
+      <h1>Переход к оплате</h1>
+      <p>Сейчас откроется защищённая страница YooMoney. После оплаты баланс Голос пополнится автоматически.</p>
+      <p><strong>{int(payment.amount_rub)} {escape(payment.currency)}</strong> за <strong>{int(payment.minutes)} мин.</strong></p>
+      <form id="yoomoney-payment-form" method="post" action="{escape(action_url)}">
+        {hidden_fields}
+        <button type="submit">Перейти в YooMoney</button>
+      </form>
+      <p class="muted">Если переход не начался автоматически, нажмите кнопку выше.</p>
+    </section>
+  </main>
+  <script>
+    window.setTimeout(function () {{
+      document.getElementById("yoomoney-payment-form").submit();
+    }}, 400);
+  </script>
 </body>
 </html>"""
 

@@ -6,6 +6,19 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from voice_input.account import (
+    DEFAULT_ACCOUNT_SERVER_URL,
+    account_email_from_env,
+    account_token_from_env,
+    account_token_exists,
+    clear_account_session,
+    create_account_payment,
+    fetch_account,
+    login_account,
+    logout_account,
+    register_account,
+    save_account_session,
+)
 from voice_input.config import ConfigManager, DEFAULT_CONFIG_DATA, PremiumSettings, deep_merge
 from voice_input.diagnostics import collect_diagnostics
 from voice_input.env_file import OPENAI_API_KEY_NAME, default_env_path, env_value_exists, normalize_openai_api_key, set_env_value
@@ -14,7 +27,6 @@ from voice_input.paths import resolve_runtime_path
 from voice_input.premium import (
     PREMIUM_KEY_NAME,
     check_premium_balance,
-    normalize_premium_key,
     premium_env_value_exists,
     premium_key_from_env,
 )
@@ -109,8 +121,16 @@ class SettingsWindow:
         premium = self.config.get("premium") or {}
         self.premium_server_url_var = tk.StringVar(value=str(premium.get("server_url") or "https://golos.msgcrm.ru"))
         self.premium_key_var = tk.StringVar(value="")
+        self.account_server_url = str(premium.get("server_url") or DEFAULT_ACCOUNT_SERVER_URL)
         self.premium_key_status_var = tk.StringVar(value=self._premium_key_status_text())
         self.premium_balance_var = tk.StringVar(value="Баланс не проверялся.")
+        self.account_email_var = tk.StringVar(value=account_email_from_env())
+        self.account_password_var = tk.StringVar(value="")
+        self.account_name_var = tk.StringVar(value="")
+        self.account_status_var = tk.StringVar(value=self._account_status_text())
+        self.account_balance_var = tk.StringVar(value="Баланс не проверялся.")
+        self.account_payment_amount_var = tk.StringVar(value="100")
+        self.header_account_var = tk.StringVar(value=self._header_account_text())
         text_correction = self.config.get("text_correction") or {}
         self.text_correction_enabled_var = tk.BooleanVar(value=bool(text_correction.get("enabled", False)))
         self.text_correction_model_var = tk.StringVar(value=str(text_correction.get("model") or "gpt-5.4-mini"))
@@ -194,6 +214,17 @@ class SettingsWindow:
         )
         status.pack(side="right", padx=28)
 
+        account_status = tk.Label(
+            header,
+            textvariable=self.header_account_var,
+            bg="#fff7c2",
+            fg=COLORS["ink"],
+            padx=14,
+            pady=7,
+            font=("Segoe UI", 10, "bold"),
+        )
+        account_status.pack(side="right", padx=(0, 10))
+
         body = ttk.Frame(self.root, padding=(24, 20, 24, 16))
         body.pack(fill="both", expand=True)
 
@@ -204,16 +235,19 @@ class SettingsWindow:
         notebook.pack(fill="both", expand=True)
 
         main_tab = ttk.Frame(notebook, padding=18)
+        account_tab = ttk.Frame(notebook, padding=18)
         recognition_tab = ttk.Frame(notebook, padding=18)
         diagnostics_tab = ttk.Frame(notebook, padding=18)
         updates_tab = ttk.Frame(notebook, padding=18)
 
         notebook.add(main_tab, text="Главное")
+        notebook.add(account_tab, text="Аккаунт")
         notebook.add(recognition_tab, text="Распознавание")
         notebook.add(diagnostics_tab, text="Диагностика")
         notebook.add(updates_tab, text="Обновления")
 
         self._build_main_tab(main_tab)
+        self._build_account_tab(account_tab)
         self._build_recognition_tab(recognition_tab)
         self._build_diagnostics_tab(diagnostics_tab)
         self._build_updates_tab(updates_tab)
@@ -252,6 +286,53 @@ class SettingsWindow:
         ).grid(row=5, column=1, sticky="w", pady=(2, 8))
         panel.columnconfigure(1, weight=1)
 
+    def _build_account_tab(self, parent: ttk.Frame) -> None:
+        panel = self._panel(parent)
+        ttk.Label(panel, text="Аккаунт Голос", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        tk.Label(
+            panel,
+            textvariable=self.account_status_var,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=1, column=1, sticky="w", pady=(0, 10))
+        self._field(panel, 2, "Email", ttk.Entry(panel, textvariable=self.account_email_var, width=42))
+        self._field(panel, 3, "Имя", ttk.Entry(panel, textvariable=self.account_name_var, width=42))
+        self._field(panel, 4, "Пароль", ttk.Entry(panel, textvariable=self.account_password_var, show="*", width=42))
+
+        account_buttons = ttk.Frame(panel, style="Panel.TFrame")
+        account_buttons.grid(row=5, column=1, sticky="w", pady=(4, 14))
+        ttk.Button(account_buttons, text="Войти", style="Accent.TButton", command=self._account_login).pack(side="left")
+        ttk.Button(account_buttons, text="Зарегистрироваться", command=self._account_register).pack(side="left", padx=(10, 0))
+        ttk.Button(account_buttons, text="Выйти", command=self._account_logout).pack(side="left", padx=(10, 0))
+
+        tk.Label(
+            panel,
+            textvariable=self.account_balance_var,
+            bg=COLORS["panel"],
+            fg=COLORS["ink"],
+            justify="left",
+            wraplength=590,
+            font=("Segoe UI", 11, "bold"),
+        ).grid(row=6, column=1, sticky="w", pady=(0, 10))
+
+        payment_box = ttk.Frame(panel, style="Panel.TFrame")
+        ttk.Entry(payment_box, textvariable=self.account_payment_amount_var, width=10).pack(side="left")
+        ttk.Label(payment_box, text="руб.", style="Panel.TLabel").pack(side="left", padx=(6, 12))
+        ttk.Button(payment_box, text="Пополнить", style="Accent.TButton", command=self._account_create_payment).pack(side="left")
+        ttk.Button(payment_box, text="Обновить баланс", command=self._account_refresh).pack(side="left", padx=(10, 0))
+        self._field(panel, 7, "Пополнение", payment_box)
+        tk.Label(
+            panel,
+            text="Оплата открывается на защищённой странице платёжной системы. Данные карт в программе Голос не вводятся и не хранятся.",
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=8, column=1, sticky="w", pady=(4, 0))
+        panel.columnconfigure(1, weight=1)
+
     def _build_recognition_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
         profile_ids = [str(name) for name in (self.config.get("profiles") or {})]
@@ -286,14 +367,9 @@ class SettingsWindow:
             wraplength=590,
         ).grid(row=6, column=1, sticky="w", pady=(0, 8))
 
-        premium_server_box = ttk.Entry(panel, textvariable=self.premium_server_url_var, width=46)
-        self._field(panel, 7, "Сервер Премиум", premium_server_box)
-
-        premium_key_box = ttk.Frame(panel, style="Panel.TFrame")
-        ttk.Entry(premium_key_box, textvariable=self.premium_key_var, show="*", width=34).pack(side="left", fill="x", expand=True)
-        ttk.Button(premium_key_box, text="Очистить поле", command=lambda: self.premium_key_var.set("")).pack(side="left", padx=(8, 0))
-        ttk.Button(premium_key_box, text="Проверить баланс", command=self._check_premium_balance).pack(side="left", padx=(8, 0))
-        self._field(panel, 8, "Премиум-ключ Голос", premium_key_box)
+        premium_box = ttk.Frame(panel, style="Panel.TFrame")
+        ttk.Button(premium_box, text="Проверить баланс", command=self._check_premium_balance).pack(side="left")
+        self._field(panel, 7, "Премиум Голос", premium_box)
         tk.Label(
             panel,
             textvariable=self.premium_key_status_var,
@@ -301,7 +377,7 @@ class SettingsWindow:
             fg=COLORS["muted"],
             justify="left",
             wraplength=590,
-        ).grid(row=9, column=1, sticky="w", pady=(0, 4))
+        ).grid(row=8, column=1, sticky="w", pady=(0, 4))
         tk.Label(
             panel,
             textvariable=self.premium_balance_var,
@@ -309,7 +385,7 @@ class SettingsWindow:
             fg=COLORS["muted"],
             justify="left",
             wraplength=590,
-        ).grid(row=10, column=1, sticky="w", pady=(0, 8))
+        ).grid(row=9, column=1, sticky="w", pady=(0, 8))
 
         info = tk.Label(
             panel,
@@ -319,7 +395,7 @@ class SettingsWindow:
             justify="left",
             wraplength=590,
         )
-        info.grid(row=11, column=1, sticky="w", pady=(10, 0))
+        info.grid(row=10, column=1, sticky="w", pady=(10, 0))
         panel.columnconfigure(1, weight=1)
         profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_recognition_profile_ui())
         self._refresh_recognition_profile_ui()
@@ -424,7 +500,6 @@ class SettingsWindow:
         language = LANGUAGE_OPTIONS.get(self.language_var.get(), "ru")
         openai_model = self.openai_model_var.get().strip()
         openai_key = normalize_openai_api_key(self.openai_key_var.get())
-        premium_key = normalize_premium_key(self.premium_key_var.get(), PREMIUM_KEY_NAME)
         text_correction_model = self.text_correction_model_var.get().strip()
 
         if not hotkey:
@@ -439,22 +514,18 @@ class SettingsWindow:
         if profile == "openai" and not openai_model:
             messagebox.showerror("Голос", "Укажите модель распознавания GPT.")
             return
-        if profile == "premium" and not self.premium_server_url_var.get().strip():
-            messagebox.showerror("Голос", "Укажите сервер Голос Премиум.")
-            return
         if self.text_correction_enabled_var.get() and not text_correction_model:
             messagebox.showerror("Голос", "Укажите модель исправления.")
             return
         if (profile == "openai" or self.text_correction_enabled_var.get()) and not (openai_key or self._openai_key_exists()):
             messagebox.showerror("Голос", "Для OpenAI-режима вставьте API-ключ OpenAI на вкладке распознавания.")
             return
-        if profile == "premium" and not (premium_key or self._premium_key_exists()):
-            messagebox.showerror("Голос", "Для премиум-режима вставьте премиум-ключ Голос.")
+        if profile == "premium" and not self._premium_key_exists():
+            messagebox.showerror("Голос", "Для премиум-режима войдите в аккаунт Голос на вкладке «Аккаунт».")
             return
 
         try:
             openai_key_saved = self._save_openai_key_if_needed(openai_key)
-            premium_key_saved = self._save_premium_key_if_needed(premium_key)
         except ValueError as exc:
             messagebox.showerror("Голос", str(exc))
             return
@@ -467,7 +538,7 @@ class SettingsWindow:
         raw["language"] = language
         raw["recognition_profile"] = profile
         raw.setdefault("openai", {})["model"] = openai_model
-        raw.setdefault("premium", {})["server_url"] = self.premium_server_url_var.get().strip()
+        raw.setdefault("premium", {})["server_url"] = self.account_server_url
         raw.setdefault("premium", {})["license_key_env"] = PREMIUM_KEY_NAME
         raw.setdefault("text_correction", {})["enabled"] = bool(self.text_correction_enabled_var.get())
         raw.setdefault("text_correction", {})["model"] = text_correction_model
@@ -483,14 +554,12 @@ class SettingsWindow:
         self.support_status_var.set(self._support_status_text())
         if openai_key_saved:
             self.openai_key_status_var.set(self._openai_key_status_text())
-        if premium_key_saved:
-            self.premium_key_status_var.set(self._premium_key_status_text())
+        self.premium_key_status_var.set(self._premium_key_status_text())
+        self.header_account_var.set(self._header_account_text())
         self.status_var.set("Сохранено. Для применения горячей клавиши и профиля перезапустите Голос.")
         message = "Настройки сохранены."
         if openai_key_saved:
             message += "\n\nOpenAI API-ключ сохранён локально на этом компьютере."
-        if premium_key_saved:
-            message += "\n\nПремиум-ключ Голос сохранён локально на этом компьютере."
         messagebox.showinfo("Голос", message)
 
     def _apply_shortcuts(self) -> None:
@@ -536,6 +605,140 @@ class SettingsWindow:
             return "Кнопка «Отправить диагностику» отправит безопасный архив на этот сервер. Аудио, модели и ключи не входят в архив."
         return "Если сервер не указан, кнопка откроет GitHub-обращение и папку с ZIP-архивом для ручной отправки."
 
+    def _account_status_text(self) -> str:
+        email = account_email_from_env()
+        if account_token_exists():
+            return f"Вход выполнен: {email or 'аккаунт Голос'}."
+        return "Войдите или зарегистрируйтесь, чтобы видеть баланс и пополнять Голос Премиум."
+
+    def _header_account_text(self) -> str:
+        email = account_email_from_env()
+        if account_token_exists():
+            return f"Аккаунт: {email or 'вход выполнен'}"
+        return "Аккаунт: вход"
+
+    def _account_login(self) -> None:
+        email = self.account_email_var.get().strip()
+        password = self.account_password_var.get()
+        if not email or not password:
+            messagebox.showerror("Голос", "Введите email и пароль.")
+            return
+        self._run_account_worker(
+            "Выполняю вход...",
+            lambda: login_account(self.account_server_url, email, password),
+            self._handle_account_session,
+        )
+
+    def _account_register(self) -> None:
+        email = self.account_email_var.get().strip()
+        password = self.account_password_var.get()
+        name = self.account_name_var.get().strip()
+        if not email or not password:
+            messagebox.showerror("Голос", "Введите email и пароль.")
+            return
+        self._run_account_worker(
+            "Создаю аккаунт...",
+            lambda: register_account(self.account_server_url, email, password, name),
+            self._handle_account_session,
+        )
+
+    def _account_refresh(self) -> None:
+        if not account_token_exists():
+            messagebox.showinfo("Голос", "Сначала войдите в аккаунт.")
+            return
+        self._run_account_worker(
+            "Обновляю баланс...",
+            lambda: fetch_account(self.account_server_url),
+            self._show_account_info,
+        )
+
+    def _account_create_payment(self) -> None:
+        if not account_token_exists():
+            messagebox.showinfo("Голос", "Сначала войдите в аккаунт.")
+            return
+        try:
+            amount_rub = int(self.account_payment_amount_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Голос", "Введите сумму пополнения в рублях.")
+            return
+        self._run_account_worker(
+            "Создаю платёж...",
+            lambda: create_account_payment(self.account_server_url, amount_rub),
+            self._handle_account_payment,
+        )
+
+    def _account_logout(self) -> None:
+        self._run_account_worker(
+            "Выхожу из аккаунта...",
+            lambda: logout_account(self.account_server_url),
+            lambda _result: self._after_account_logout(),
+        )
+
+    def _run_account_worker(self, status: str, worker, on_success) -> None:  # noqa: ANN001
+        self.account_status_var.set(status)
+
+        def target() -> None:
+            try:
+                result = worker()
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self._show_account_error(exc))
+                return
+            self.root.after(0, lambda: on_success(result))
+
+        threading.Thread(target=target, name="golos-account", daemon=True).start()
+
+    def _handle_account_session(self, session) -> None:  # noqa: ANN001
+        save_account_session(session.account.email, session.token)
+        self.account_password_var.set("")
+        self._show_account_info(session.account)
+        self.account_status_var.set(f"Вход выполнен: {session.account.email}.")
+        self.premium_key_status_var.set(self._premium_key_status_text())
+        self.header_account_var.set(self._header_account_text())
+        messagebox.showinfo("Голос", "Аккаунт подключён. Премиум-доступ будет использоваться автоматически.")
+
+    def _show_account_info(self, account) -> None:  # noqa: ANN001
+        self.account_email_var.set(getattr(account, "email", self.account_email_var.get()))
+        self.account_name_var.set(getattr(account, "name", self.account_name_var.get()))
+        balance = float(getattr(account, "balance_minutes", 0.0) or 0.0)
+        granted = float(getattr(account, "total_granted_minutes", 0.0) or 0.0)
+        used = float(getattr(account, "total_used_minutes", 0.0) or 0.0)
+        self.account_balance_var.set(f"Баланс: {balance:.1f} мин. Начислено: {granted:.1f} мин. Использовано: {used:.1f} мин.")
+        self.premium_balance_var.set(self.account_balance_var.get())
+        self.account_status_var.set(f"Вход выполнен: {getattr(account, 'email', '')}.")
+        self.header_account_var.set(f"Баланс: {balance:.1f} мин.")
+
+    def _handle_account_payment(self, payment) -> None:  # noqa: ANN001
+        if getattr(payment, "error_message", ""):
+            self.account_status_var.set("Платёж не создан.")
+            messagebox.showerror("Голос", getattr(payment, "error_message"))
+            return
+        payment_url = getattr(payment, "payment_url", "")
+        if not payment_url:
+            self.account_status_var.set("Платёж создан, но ссылка не получена.")
+            messagebox.showerror("Голос", "Сервер не вернул ссылку на оплату.")
+            return
+        self.account_status_var.set("Платёж создан. Открываю страницу оплаты...")
+        try:
+            os.startfile(payment_url)  # noqa: S606 - Windows desktop helper.
+        except AttributeError:
+            import webbrowser
+
+            webbrowser.open(payment_url)
+        messagebox.showinfo("Голос", "После оплаты вернитесь сюда и нажмите «Обновить баланс».")
+
+    def _after_account_logout(self) -> None:
+        clear_account_session()
+        self.account_password_var.set("")
+        self.account_status_var.set(self._account_status_text())
+        self.account_balance_var.set("Баланс не проверялся.")
+        self.premium_balance_var.set("Баланс не проверялся.")
+        self.premium_key_status_var.set(self._premium_key_status_text())
+        self.header_account_var.set(self._header_account_text())
+
+    def _show_account_error(self, exc: Exception) -> None:
+        self.account_status_var.set("Ошибка аккаунта.")
+        messagebox.showerror("Голос", f"Не удалось выполнить действие: {exc}")
+
     def _openai_key_exists(self) -> bool:
         return env_value_exists(default_env_path(), OPENAI_API_KEY_NAME) or bool(os.getenv(OPENAI_API_KEY_NAME))
 
@@ -562,9 +765,11 @@ class SettingsWindow:
         return premium_env_value_exists(self._premium_settings_from_ui())
 
     def _premium_key_status_text(self) -> str:
+        if account_token_exists():
+            return "Премиум Голос подключён через аккаунт. Баланс и пополнение находятся на вкладке «Аккаунт»."
         if premium_env_value_exists(self._premium_settings_from_ui()):
-            return "Премиум-ключ Голос сохранён локально. Чтобы заменить его, вставьте новый ключ и нажмите «Сохранить»."
-        return "Премиум-ключ не сохранён. Его можно получить после оплаты пакета минут и вставить сюда."
+            return "Премиум Голос подключён на этом компьютере."
+        return "Для режима «Премиум Голос» войдите в аккаунт и пополните баланс."
 
     def _save_premium_key_if_needed(self, premium_key: str) -> bool:
         if not premium_key:
@@ -589,17 +794,21 @@ class SettingsWindow:
                 return
             self.root.after(
                 0,
-                lambda: self.premium_balance_var.set(
-                    f"Осталось {balance.balance_minutes:.1f} мин. Начислено {balance.total_granted_minutes:.1f} мин."
-                ),
+                lambda: self._show_premium_balance_result(balance),
             )
 
         threading.Thread(target=worker, name="check-premium-balance", daemon=True).start()
 
+    def _show_premium_balance_result(self, balance) -> None:  # noqa: ANN001
+        text = f"Осталось {balance.balance_minutes:.1f} мин. Начислено {balance.total_granted_minutes:.1f} мин."
+        self.premium_balance_var.set(text)
+        self.account_balance_var.set(text)
+        self.header_account_var.set(f"Баланс: {balance.balance_minutes:.1f} мин.")
+
     def _premium_settings_from_ui(self) -> PremiumSettings:
         premium = self.config.get("premium") or {}
         return PremiumSettings(
-            server_url=self.premium_server_url_var.get().strip() or str(premium.get("server_url") or "https://golos.msgcrm.ru"),
+            server_url=self.account_server_url or str(premium.get("server_url") or "https://golos.msgcrm.ru"),
             license_key_env=PREMIUM_KEY_NAME,
             model=str(premium.get("model") or "gpt-4o-mini-transcribe"),
         )
@@ -622,7 +831,8 @@ class SettingsWindow:
             support = self.config.get("support") or {}
             server_url = self.support_server_url_var.get().strip() or str(support.get("server_url") or "").strip()
             premium_key = premium_key_from_env(self._premium_settings_from_ui())
-            if not server_url and premium_key:
+            account_token = account_token_from_env()
+            if not server_url and (premium_key or account_token):
                 server_url = self._premium_settings_from_ui().server_url
             if server_url:
                 result = upload_support_package(
@@ -634,6 +844,7 @@ class SettingsWindow:
                         "backend": str(self.config.get("backend") or ""),
                     },
                     premium_key=premium_key,
+                    account_token=account_token,
                 )
                 message = result.message
             else:
@@ -677,6 +888,7 @@ class SettingsWindow:
                         package,
                         self._premium_settings_from_ui().server_url,
                         premium_key=premium_key_from_env(self._premium_settings_from_ui()),
+                        account_token=account_token_from_env(),
                         metadata={
                             "profile": str(self.config.get("recognition_profile") or ""),
                             "backend": str(self.config.get("backend") or ""),
@@ -778,7 +990,7 @@ class SettingsWindow:
         if profile == "openai":
             return f"Через интернет с помощью OpenAI: {self.openai_model_var.get()}."
         if profile == "premium":
-            return f"Через сервер Голос Премиум: {self.premium_server_url_var.get()}."
+            return "Через сервер Голос Премиум. Вход, баланс и пополнение находятся на вкладке «Аккаунт»."
         return f"{LOCAL_MODEL_NAMES.get(profile, 'Локальная модель')}. Работает на вашем Windows-компьютере без отправки аудио в интернет."
 
     def _correction_model_text(self, enabled: bool) -> str:

@@ -5,7 +5,7 @@ import urllib.request
 from dataclasses import dataclass
 
 from voice_input.config import PremiumSettings
-from voice_input.premium import premium_key_from_env
+from voice_input.premium import premium_auth_headers
 
 
 @dataclass(slots=True)
@@ -18,13 +18,13 @@ class RemoteAction:
 
 def fetch_remote_actions(settings: PremiumSettings) -> list[RemoteAction]:
     server_url = settings.server_url.strip()
-    license_key = premium_key_from_env(settings)
-    if not server_url or not license_key:
+    auth_headers = premium_auth_headers(settings)
+    if not server_url or not auth_headers:
         return []
 
     request = urllib.request.Request(
         server_url.rstrip("/") + "/api/client/actions",
-        headers={"X-Golos-Premium-Key": license_key},
+        headers=auth_headers,
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -47,8 +47,8 @@ def fetch_remote_actions(settings: PremiumSettings) -> list[RemoteAction]:
 
 def complete_remote_action(settings: PremiumSettings, action_id: str, status: str, message: str = "") -> None:
     server_url = settings.server_url.strip()
-    license_key = premium_key_from_env(settings)
-    if not server_url or not license_key:
+    auth_headers = premium_auth_headers(settings)
+    if not server_url or not auth_headers:
         return
 
     body = json.dumps({"status": status, "message": message}, ensure_ascii=False).encode("utf-8")
@@ -57,7 +57,7 @@ def complete_remote_action(settings: PremiumSettings, action_id: str, status: st
         data=body,
         headers={
             "Content-Type": "application/json",
-            "X-Golos-Premium-Key": license_key,
+            **auth_headers,
         },
         method="POST",
     )
