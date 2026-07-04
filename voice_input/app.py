@@ -36,6 +36,7 @@ from voice_input.tray import TrayController
 from voice_input.transcribers.faster_whisper_transcriber import FasterWhisperTranscriber
 from voice_input.transcribers.openai_transcriber import OpenAITranscriber
 from voice_input.transcribers.premium_proxy_transcriber import PremiumProxyTranscriber
+from voice_input.transcribers.server_proxy_transcriber import ServerProxyTranscriber
 from voice_input.updater import (
     check_for_update,
     clear_update_install_request,
@@ -320,6 +321,12 @@ class VoiceInputApp:
             )
         elif backend == "openai":
             self.logger.info("Backend selected backend=openai model=%s api_key_present=%s", self.config.openai.model, bool(os.getenv("OPENAI_API_KEY")))
+        elif backend == "server_proxy":
+            self.logger.info(
+                "Backend selected backend=server_proxy server=%s model=%s",
+                self.config.server_stt.server_url,
+                self.config.server_stt.model,
+            )
         elif backend == "premium_proxy":
             self.logger.info(
                 "Backend selected backend=premium_proxy server=%s license_key_present=%s",
@@ -469,7 +476,7 @@ class VoiceInputApp:
     def _transcribe_with_online_fallback(self, wav_path: str | Path):  # noqa: ANN202
         backend = self.config.backend
         transcriber = self._get_transcriber_for_current_config()
-        if backend not in {"openai", "premium_proxy"}:
+        if backend not in {"openai", "server_proxy", "premium_proxy"}:
             return transcriber.transcribe(wav_path), False
 
         try:
@@ -546,6 +553,12 @@ class VoiceInputApp:
             key = (backend, self.config.openai.model, "api", self.config.openai.response_format)
             if key not in self._transcribers:
                 self._transcribers[key] = OpenAITranscriber(self.config.openai, self.config.language, self.logger)
+            return self._transcribers[key]
+
+        if backend == "server_proxy":
+            key = (backend, self.config.server_stt.server_url, self.config.server_stt.model, self.config.language)
+            if key not in self._transcribers:
+                self._transcribers[key] = ServerProxyTranscriber(self.config.server_stt, self.config.language, self.logger)
             return self._transcribers[key]
 
         if backend == "premium_proxy":

@@ -34,6 +34,8 @@ https://golos.msgcrm.ru
 - Admin password source is `GOLOS_ADMIN_PASSWORD`, or `GOLOS_ADMIN_TOKEN` when a separate password is not set.
 - `OPENAI_API_KEY` is required on the server for premium transcription proxy.
 - `GOLOS_PREMIUM_TRANSCRIBE_MODEL` can override the premium transcription model, default `gpt-4o-mini-transcribe`.
+- `GOLOS_STT_ENABLED=1` enables the non-premium server transcription endpoint `/api/server/transcribe`.
+- `GOLOS_STT_MODEL_SIZE`, `GOLOS_STT_DEVICE`, and `GOLOS_STT_COMPUTE_TYPE` control the local `faster-whisper` server model.
 - Tokens and passwords are stored only in server env and local user `.env`.
 - Do not commit `.env`, server env files, diagnostic ZIP files, SQLite data, SSH keys, or production backups.
 - Diagnostic ZIP validation rejects `.env`, audio files, `temp/`, and `models/`.
@@ -50,6 +52,18 @@ curl -fsS https://golos.msgcrm.ru/api/update
 curl -fsS https://golos.msgcrm.ru/
 nginx -t
 certbot certificates
+```
+
+Local server STT requires the model to be downloaded on first use and kept under the server data directory. For the current CPU VPS, start with:
+
+```env
+GOLOS_STT_ENABLED=1
+GOLOS_STT_MODEL_SIZE=base
+GOLOS_STT_DEVICE=cpu
+GOLOS_STT_COMPUTE_TYPE=int8
+GOLOS_STT_BEAM_SIZE=1
+GOLOS_STT_VAD_FILTER=true
+GOLOS_STT_RATE_LIMIT_PER_MINUTE=30
 ```
 
 ## Private Diagnostics Admin

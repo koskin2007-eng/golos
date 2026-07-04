@@ -43,6 +43,8 @@ profiles:
       compute_type: "int8"
       beam_size: 1
       vad_filter: true
+  server:
+    backend: "server_proxy"
   openai:
     backend: "openai"
   premium:
@@ -70,6 +72,10 @@ local_quality:
 openai:
   model: "gpt-4o-mini-transcribe"
   response_format: "text"
+
+server_stt:
+  server_url: "https://golos.msgcrm.ru"
+  model: "base"
 
 premium:
   server_url: "https://golos.msgcrm.ru"
@@ -140,6 +146,9 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
                 "vad_filter": True,
             },
         },
+        "server": {
+            "backend": "server_proxy",
+        },
         "openai": {
             "backend": "openai",
         },
@@ -169,6 +178,10 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "openai": {
         "model": "gpt-4o-mini-transcribe",
         "response_format": "text",
+    },
+    "server_stt": {
+        "server_url": "https://golos.msgcrm.ru",
+        "model": "base",
     },
     "premium": {
         "server_url": "https://golos.msgcrm.ru",
@@ -224,6 +237,12 @@ class LocalWhisperSettings:
 class OpenAISettings:
     model: str = "gpt-4o-mini-transcribe"
     response_format: str = "text"
+
+
+@dataclass(slots=True)
+class ServerSTTSettings:
+    server_url: str = "https://golos.msgcrm.ru"
+    model: str = "base"
 
 
 @dataclass(slots=True)
@@ -284,6 +303,7 @@ class AppConfig:
     local_fast: LocalWhisperSettings
     local_quality: LocalWhisperSettings
     openai: OpenAISettings
+    server_stt: ServerSTTSettings
     premium: PremiumSettings
     text_correction: TextCorrectionSettings
     paste: PasteSettings
@@ -320,7 +340,7 @@ def apply_recognition_profile(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(selected, dict):
         raise ValueError(f"Profile {profile_name!r} must be a mapping.")
 
-    allowed_keys = {"backend", "local_fast", "local_quality", "openai", "premium"}
+    allowed_keys = {"backend", "local_fast", "local_quality", "openai", "server_stt", "premium"}
     overrides = {key: value for key, value in selected.items() if key in allowed_keys}
     return deep_merge(data, overrides)
 
@@ -336,6 +356,7 @@ def build_config(data: dict[str, Any]) -> AppConfig:
         local_fast=LocalWhisperSettings(**data["local_fast"]),
         local_quality=LocalWhisperSettings(**data["local_quality"]),
         openai=OpenAISettings(**data["openai"]),
+        server_stt=ServerSTTSettings(**data["server_stt"]),
         premium=PremiumSettings(**data["premium"]),
         text_correction=TextCorrectionSettings(**data["text_correction"]),
         paste=PasteSettings(**data["paste"]),

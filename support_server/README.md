@@ -83,6 +83,7 @@ Do not commit server env files, support tokens, diagnostic archives, SQLite data
 - `POST /payments/yoomoney/webhook` - принимает подтверждение оплаты YooMoney.
 - `GET /api/premium/balance` - проверяет премиум-ключ и баланс минут.
 - `POST /api/premium/transcribe` - распознаёт WAV через серверный OpenAI API и списывает секунды.
+- `POST /api/server/transcribe` - распознаёт WAV локальной серверной моделью без OpenAI и без списания премиум-минут.
 - `GET /api/client/actions` - отдаёт безопасные запросы поддержки клиенту.
 - `POST /api/client/actions/{action_id}/complete` - закрывает запрос поддержки после действия пользователя.
 
@@ -115,6 +116,14 @@ http://127.0.0.1:8765/health
 - `GOLOS_PREMIUM_MINUTES_PER_100_RUB` - сколько минут начислять за 100 рублей, сейчас `180`.
 - `GOLOS_YOOMONEY_RECEIVER` - получатель YooMoney.
 - `GOLOS_YOOMONEY_NOTIFICATION_SECRET` - секрет проверки webhook YooMoney.
+- `GOLOS_STT_ENABLED` - включает локальное серверное распознавание на `/api/server/transcribe`, по умолчанию `false`.
+- `GOLOS_STT_MODEL_SIZE` - модель `faster-whisper` для серверного режима, по умолчанию `base`.
+- `GOLOS_STT_DEVICE` - устройство для серверной модели, обычно `cpu` или `cuda`, по умолчанию `cpu`.
+- `GOLOS_STT_COMPUTE_TYPE` - тип вычислений, по умолчанию `int8`.
+- `GOLOS_STT_BEAM_SIZE` - beam size для серверной модели, по умолчанию `1`.
+- `GOLOS_STT_VAD_FILTER` - включает VAD-фильтр, по умолчанию `true`.
+- `GOLOS_STT_MAX_DURATION_SECONDS` - максимальная длительность одного аудио для серверного режима, по умолчанию `120`.
+- `GOLOS_STT_RATE_LIMIT_PER_MINUTE` - простой лимит запросов на IP для `/api/server/transcribe`, по умолчанию `30`.
 
 ## Подключение приложения
 
@@ -148,6 +157,8 @@ GOLOS_PREMIUM_KEY=...
 ```
 
 Аккаунт-токен или премиум-ключ используется для `/api/premium/balance`, `/api/premium/transcribe`, безопасных client actions и загрузки диагностики без выдачи пользователю служебного `GOLOS_SUPPORT_TOKEN`.
+
+Для бесплатного серверного режима приложение использует `/api/server/transcribe`. Этот endpoint не требует пользовательского OpenAI-ключа и не использует серверный OpenAI API, но требует включённого `GOLOS_STT_ENABLED=1` на сервере.
 
 ## Безопасность
 

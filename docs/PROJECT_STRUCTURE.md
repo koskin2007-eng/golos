@@ -42,7 +42,8 @@
    └─ transcribers/
       ├─ faster_whisper_transcriber.py
       ├─ openai_transcriber.py
-      └─ premium_proxy_transcriber.py
+      ├─ premium_proxy_transcriber.py
+      └─ server_proxy_transcriber.py
 ```
 
 ## Root files
@@ -99,8 +100,9 @@ These folders are local runtime output and are not committed:
 
 ## Support server
 
-- `support_server/main.py` - FastAPI entry point with `/health`, account APIs, payment pages, diagnostics, events, update metadata, premium transcription, and admin pages.
+- `support_server/main.py` - FastAPI entry point with `/health`, account APIs, payment pages, diagnostics, events, update metadata, server/local STT, premium transcription, and admin pages.
 - `support_server/settings.py` - environment-based server settings.
+- `support_server/stt.py` - lazy server-side `faster-whisper` loader for `/api/server/transcribe`.
 - `support_server/storage.py` - SQLite helpers for diagnostics, premium licenses, account sessions, payments, and safe support actions.
 - `support_server/yoomoney.py` - YooMoney payment form and webhook validation helpers.
 - `support_server/requirements.txt` - server-only Python dependencies.
@@ -111,6 +113,7 @@ These folders are local runtime output and are not committed:
 - `voice_input/transcribers/faster_whisper_transcriber.py` - local `faster-whisper` backend.
 - `voice_input/transcribers/openai_transcriber.py` - optional OpenAI audio transcription backend.
 - `voice_input/transcribers/premium_proxy_transcriber.py` - Golos premium server transcription backend.
+- `voice_input/transcribers/server_proxy_transcriber.py` - Golos server transcription backend without user OpenAI key or premium balance.
 
 ## Development flow
 

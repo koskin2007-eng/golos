@@ -25,6 +25,14 @@ class ServerSettings:
     premium_minutes_per_100_rub: int
     yoomoney_receiver: str
     yoomoney_notification_secret: str
+    stt_enabled: bool
+    stt_model_size: str
+    stt_device: str
+    stt_compute_type: str
+    stt_beam_size: int
+    stt_vad_filter: bool
+    stt_max_duration_seconds: int
+    stt_rate_limit_per_minute: int
 
 
 def load_settings() -> ServerSettings:
@@ -53,4 +61,19 @@ def load_settings() -> ServerSettings:
         premium_minutes_per_100_rub=int(os.getenv("GOLOS_PREMIUM_MINUTES_PER_100_RUB", "180")),
         yoomoney_receiver=os.getenv("GOLOS_YOOMONEY_RECEIVER", ""),
         yoomoney_notification_secret=os.getenv("GOLOS_YOOMONEY_NOTIFICATION_SECRET", ""),
+        stt_enabled=_env_bool("GOLOS_STT_ENABLED", False),
+        stt_model_size=os.getenv("GOLOS_STT_MODEL_SIZE", "base"),
+        stt_device=os.getenv("GOLOS_STT_DEVICE", "cpu"),
+        stt_compute_type=os.getenv("GOLOS_STT_COMPUTE_TYPE", "int8"),
+        stt_beam_size=int(os.getenv("GOLOS_STT_BEAM_SIZE", "1")),
+        stt_vad_filter=_env_bool("GOLOS_STT_VAD_FILTER", True),
+        stt_max_duration_seconds=int(os.getenv("GOLOS_STT_MAX_DURATION_SECONDS", "120")),
+        stt_rate_limit_per_minute=int(os.getenv("GOLOS_STT_RATE_LIMIT_PER_MINUTE", "30")),
     )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

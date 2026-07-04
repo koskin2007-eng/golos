@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import logging
 import os
 import tempfile
+import threading
 import time
 import wave
 from html import escape
@@ -13,6 +15,7 @@ from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Request,
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from support_server.settings import ServerSettings, load_settings
+from support_server.stt import transcribe_with_local_model
 from support_server.storage import (
     Account,
     AccountPayment,
@@ -65,6 +68,9 @@ APP_VERSION = "0.1.0"
 ADMIN_COOKIE_NAME = "golos_admin_token"
 DOWNLOAD_URL = f"https://github.com/{GITHUB_REPOSITORY}/releases/latest/download/Golos-win64.zip"
 RELEASES_URL = f"https://github.com/{GITHUB_REPOSITORY}/releases/latest"
+LOGGER = logging.getLogger("golos.support_server")
+STT_RATE_LIMIT_LOCK = threading.Lock()
+STT_RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
 
 
 def create_app(settings: ServerSettings | None = None) -> FastAPI:
@@ -95,6 +101,51 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             return load_update_payload(server_settings)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"Update metadata unavailable: {exc}") from exc
+
+    @app.post("/api/server/transcribe")
+    async def server_transcribe(
+        request: Request,
+        file: UploadFile = File(...),
+        language: str = Form("ru"),
+        duration_seconds: str = Form("0"),
+        model: str = Form(""),
+    ) -> dict[str, object]:
+        if not server_settings.stt_enabled:
+            raise HTTPException(status_code=503, detail="Server local transcription is disabled.")
+        _check_stt_rate_limit(request, server_settings)
+
+        content = await file.read(server_settings.max_upload_bytes + 1)
+        if len(content) > server_settings.max_upload_bytes:
+            raise HTTPException(status_code=400, detail="Audio file is too large.")
+
+        measured_seconds = _wav_duration_seconds(content)
+        fallback_seconds = _safe_float(duration_seconds)
+        audio_seconds = measured_seconds or fallback_seconds
+        if audio_seconds > server_settings.stt_max_duration_seconds:
+            raise HTTPException(status_code=400, detail="Audio file is too long.")
+
+        if model and model != server_settings.stt_model_size:
+            LOGGER.info(
+                "Client requested server STT model=%s; using configured model=%s",
+                model,
+                server_settings.stt_model_size,
+            )
+
+        result = transcribe_with_local_model(
+            server_settings,
+            content,
+            file.filename or "audio.wav",
+            language,
+            LOGGER,
+        )
+        return {
+            "ok": True,
+            "text": result.text,
+            "model": result.model,
+            "backend": result.backend,
+            "elapsed_ms": round(result.elapsed_ms, 1),
+            "audio_seconds": round(audio_seconds, 3),
+        }
 
     @app.post("/api/account/register")
     async def account_register(request: Request) -> dict[str, object]:
@@ -714,6 +765,21 @@ def _require_upload_auth(
         if license is not None and license.active:
             return
         raise HTTPException(status_code=401, detail="Unauthorized.")
+
+
+def _check_stt_rate_limit(request: Request, settings: ServerSettings) -> None:
+    limit = settings.stt_rate_limit_per_minute
+    if limit <= 0:
+        return
+    remote_addr = request.client.host if request.client else "unknown"
+    now = time.time()
+    cutoff = now - 60
+    with STT_RATE_LIMIT_LOCK:
+        bucket = [timestamp for timestamp in STT_RATE_LIMIT_BUCKETS.get(remote_addr, []) if timestamp >= cutoff]
+        if len(bucket) >= limit:
+            raise HTTPException(status_code=429, detail="Too many transcription requests.")
+        bucket.append(now)
+        STT_RATE_LIMIT_BUCKETS[remote_addr] = bucket
 
 
 def _transcribe_with_openai(content: bytes, filename: str, language: str) -> tuple[str, str]:

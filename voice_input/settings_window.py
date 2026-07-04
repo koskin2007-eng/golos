@@ -79,6 +79,10 @@ PROFILE_HELP_TEXT = {
         "OpenAI напрямую: аудио отправляется из этой программы в OpenAI по вашему личному API-ключу. "
         "Баланс Голос Премиум в этом режиме не списывается."
     ),
+    "server": (
+        "Сервер Голос: нужен интернет. Аудио отправляется на наш сервер, где распознаётся локальной моделью Голос. "
+        "OpenAI и личный API-ключ в этом режиме не используются."
+    ),
     "premium": (
         "Голос Премиум: аудио отправляется на сервер Голос, сервер распознаёт его через OpenAI "
         "и списывает минуты с вашего баланса."
@@ -89,11 +93,12 @@ PROFILE_LABELS = {
     "base": "Локально: базовый баланс",
     "small": "Локально: лучше, медленнее",
     "tiny": "Локально: быстро, качество ниже",
+    "server": "Сервер Голос: без OpenAI",
     "openai": "OpenAI напрямую: свой API-ключ",
     "premium": "Голос Премиум: через наш сервер",
 }
 
-PROFILE_ORDER = ("base", "small", "tiny", "openai", "premium")
+PROFILE_ORDER = ("base", "small", "tiny", "server", "openai", "premium")
 
 LOCAL_MODEL_NAMES = {
     "base": "Локальная модель Whisper base",
@@ -1074,6 +1079,11 @@ class SettingsWindow:
     def _recognition_model_text(self, profile: str) -> str:
         if profile == "openai":
             return f"OpenAI напрямую с этого компьютера. Нужен личный API-ключ OpenAI. Модель: {self.openai_model_var.get()}."
+        if profile == "server":
+            server_stt = self.config.get("server_stt") or {}
+            server_url = str(server_stt.get("server_url") or "https://golos.msgcrm.ru")
+            model = str(server_stt.get("model") or "base")
+            return f"Через сервер Голос: {server_url}. Локальная серверная модель: {model}. OpenAI не используется."
         if profile == "premium":
             return "Через сервер Голос Премиум. Нужен вход в аккаунт, минуты списываются с баланса."
         return f"{LOCAL_MODEL_NAMES.get(profile, 'Локальная модель')}. Работает на вашем Windows-компьютере без отправки аудио в интернет."
