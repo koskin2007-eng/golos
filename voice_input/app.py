@@ -149,6 +149,7 @@ class VoiceInputApp:
             self._preload_local_backend()
         else:
             self.logger.info("Model preload disabled; model will load after first recording")
+        self._preload_online_clients()
 
         try:
             if no_tray:
@@ -361,6 +362,33 @@ class VoiceInputApp:
                 self.logger.warning("Could not preload local model: %s", exc)
 
         threading.Thread(target=worker, name="model-preload", daemon=True).start()
+
+    def _preload_online_clients(self) -> None:
+        preload_transcriber = self.config.backend == "openai" and OpenAITranscriber.has_api_key()
+        preload_corrector = self.config.text_correction.enabled and OpenAITextCorrector.has_api_key()
+        if not preload_transcriber and not preload_corrector:
+            return
+
+        def worker() -> None:
+            started = time.perf_counter()
+            try:
+                if preload_transcriber:
+                    transcriber = self._get_transcriber("openai")
+                    warmup = getattr(transcriber, "warmup", None)
+                    if warmup is not None:
+                        warmup()
+                if preload_corrector:
+                    self._get_text_corrector().warmup()
+                self.logger.info(
+                    "Online clients warmed up elapsed_ms=%.0f openai_transcriber=%s text_corrector=%s",
+                    (time.perf_counter() - started) * 1000.0,
+                    preload_transcriber,
+                    preload_corrector,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Could not warm up online clients: %s", exc)
+
+        threading.Thread(target=worker, name="online-client-preload", daemon=True).start()
 
     def _on_hotkey_pressed(self) -> None:
         with self._state_lock:

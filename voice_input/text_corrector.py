@@ -44,13 +44,16 @@ class OpenAITextCorrector:
         self._client = OpenAI()
         return self._client
 
+    def warmup(self) -> None:
+        self._get_client()
+
     def correct(self, text: str) -> TextCorrectionResult:
         source = text.strip()
         if not source:
             return TextCorrectionResult(text=text, elapsed_ms=0.0, model=self.model)
 
-        client = self._get_client()
         started = time.perf_counter()
+        client = self._get_client()
         response = client.responses.create(
             model=self.model,
             input=[

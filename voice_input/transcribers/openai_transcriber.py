@@ -39,10 +39,13 @@ class OpenAITranscriber:
         self._client = OpenAI()
         return self._client
 
+    def warmup(self) -> None:
+        self._get_client()
+
     def transcribe(self, wav_path: str | Path) -> TranscriptionResult:
-        client = self._get_client()
         model = os.getenv("OPENAI_TRANSCRIBE_MODEL") or self.settings.model
         started = time.perf_counter()
+        client = self._get_client()
         with Path(wav_path).open("rb") as audio_file:
             params = {
                 "model": model,
