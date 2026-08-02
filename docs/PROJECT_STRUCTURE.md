@@ -9,6 +9,12 @@
 ├─ run.ps1
 ├─ build_exe.ps1
 ├─ package_release.ps1
+├─ deploy/
+│  ├─ README.md
+│  ├─ env/
+│  ├─ nginx/
+│  ├─ scripts/
+│  └─ systemd/
 ├─ support_server/
 │  ├─ main.py
 │  ├─ settings.py
@@ -20,6 +26,9 @@
 │  ├─ PROJECT_STRUCTURE.md
 │  ├─ REMOTE_RELEASE_SUPPORT_PLAN.md
 │  ├─ ROADMAP.md
+│  ├─ SERVER_MIGRATION.md
+│  ├─ SUPPORT_SERVER_PRODUCTION.md
+│  ├─ YOOMONEY_PRODUCTION.md
 │  └─ ui-mockup.png
 └─ voice_input/
    ├─ app.py
@@ -55,6 +64,7 @@
 - `run.ps1` - normal development/user launch without EXE rebuild.
 - `build_exe.ps1` - PyInstaller release build script.
 - `package_release.ps1` - release packager that creates `Golos-win64.zip`, `Golos-win64.sha256`, and `latest.json`.
+- `deploy/` - server deployment and migration templates without secrets.
 - `support_server/` - optional FastAPI server for diagnostics, events, update metadata, premium keys, in-app accounts, payments, and safe support actions.
 
 ## Docs
@@ -62,6 +72,9 @@
 - `docs/PROJECT_STRUCTURE.md` - project file map.
 - `docs/ROADMAP.md` - short product and technical roadmap.
 - `docs/REMOTE_RELEASE_SUPPORT_PLAN.md` - staged plan for GitHub Releases, updates, diagnostics, support server, and OpenAI key modes.
+- `docs/SERVER_MIGRATION.md` - runbook for moving `golos-support` to a new VPS.
+- `docs/SUPPORT_SERVER_PRODUCTION.md` - current production layout, checks, and operational notes.
+- `docs/YOOMONEY_PRODUCTION.md` - YooMoney production setup checklist.
 - `docs/ui-mockup.png` - early interface mockup.
 
 ## Runtime folders
@@ -107,6 +120,17 @@ These folders are local runtime output and are not committed:
 - `support_server/yoomoney.py` - YooMoney payment form and webhook validation helpers.
 - `support_server/requirements.txt` - server-only Python dependencies.
 - `support_server/run_local.ps1` - local server launcher.
+
+## Deploy infrastructure
+
+- `deploy/env/golos-support.env.example` - safe env template with placeholders only.
+- `deploy/systemd/golos-support.service` - systemd unit template.
+- `deploy/nginx/golos-support.http.conf` - HTTP nginx reverse proxy template for bootstrap and certbot.
+- `deploy/scripts/install_support_server.sh` - clean-server bootstrap script.
+- `deploy/scripts/deploy_update.sh` - pull current branch, install server deps, restart service, run checks.
+- `deploy/scripts/backup_data.sh` - backup server env, SQLite data, diagnostics, nginx and systemd files.
+- `deploy/scripts/restore_data.sh` - guarded restore script for a new server.
+- `deploy/scripts/health_check.sh` - local/public health checks for systemd, app and nginx.
 
 ## Recognition backends
 

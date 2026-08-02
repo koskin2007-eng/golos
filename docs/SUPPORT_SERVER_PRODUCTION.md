@@ -18,6 +18,16 @@ https://golos.msgcrm.ru
 /etc/nginx/sites-available/golos-support
 ```
 
+Reusable templates:
+
+```text
+deploy/
+docs/SERVER_MIGRATION.md
+```
+
+Use these templates for a new VPS. Do not edit live nginx, systemd, or env files
+without a short deployment plan and backup.
+
 ## Runtime
 
 - service: `golos-support`

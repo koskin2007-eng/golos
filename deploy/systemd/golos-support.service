@@ -1,0 +1,23 @@
+[Unit]
+Description=Golos support server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=golos-support
+Group=golos-support
+WorkingDirectory=/opt/golos-support
+EnvironmentFile=/etc/golos-support/golos-support.env
+ExecStart=/opt/golos-support/.venv/bin/uvicorn support_server.main:create_app --factory --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ReadWritePaths=/var/lib/golos-support /opt/golos-support
+
+[Install]
+WantedBy=multi-user.target

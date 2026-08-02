@@ -18,6 +18,13 @@ Server layout:
 /etc/nginx/sites-available/golos-support
 ```
 
+Reusable deployment and migration templates:
+
+```text
+deploy/
+docs/SERVER_MIGRATION.md
+```
+
 Runtime:
 
 - systemd service: `golos-support`
