@@ -61,6 +61,16 @@ LANGUAGE_OPTIONS = {
     "Авто": "auto",
 }
 
+VISION_MODEL_OPTIONS = {
+    "Рекомендуемый экономичный — GPT-5 Nano": "gpt-5-nano",
+    "Повышенное качество — GPT-5.6 Luna": "gpt-5.6-luna",
+}
+
+VISION_DETAIL_OPTIONS = {
+    "Высокая точность текста": "high",
+    "Быстро и экономно": "low",
+}
+
 
 PROFILE_HELP_TEXT = {
     "base": (
@@ -127,6 +137,11 @@ class SettingsWindow:
         self.openai_model_var = tk.StringVar(value=str((self.config.get("openai") or {}).get("model") or "gpt-4o-mini-transcribe"))
         self.openai_key_var = tk.StringVar(value="")
         self.openai_key_status_var = tk.StringVar(value=self._openai_key_status_text())
+        vision = self.config.get("vision") or {}
+        self.vision_enabled_var = tk.BooleanVar(value=bool(vision.get("enabled", True)))
+        self.vision_hotkey_var = tk.StringVar(value=str(vision.get("hotkey") or "F9"))
+        self.vision_model_var = tk.StringVar(value=self._vision_model_label(str(vision.get("model") or "gpt-5-nano")))
+        self.vision_detail_var = tk.StringVar(value=self._vision_detail_label(str(vision.get("detail") or "high")))
         premium = self.config.get("premium") or {}
         self.premium_server_url_var = tk.StringVar(value=str(premium.get("server_url") or "https://golos.msgcrm.ru"))
         self.premium_key_var = tk.StringVar(value="")
@@ -260,7 +275,7 @@ class SettingsWindow:
 
         status = tk.Label(
             header,
-            text="F8 готова",
+            text="F8 голос • F9 перевод",
             bg="#246b3f",
             fg="white",
             padx=18,
@@ -292,18 +307,21 @@ class SettingsWindow:
         main_outer, main_tab = self._scrollable_tab(notebook)
         account_outer, account_tab = self._scrollable_tab(notebook)
         recognition_outer, recognition_tab = self._scrollable_tab(notebook)
+        vision_outer, vision_tab = self._scrollable_tab(notebook)
         support_outer, support_tab = self._scrollable_tab(notebook)
         updates_outer, updates_tab = self._scrollable_tab(notebook)
 
         notebook.add(main_outer, text="Главное")
         notebook.add(account_outer, text="Аккаунт")
         notebook.add(recognition_outer, text="Распознавание")
+        notebook.add(vision_outer, text="Зрение")
         notebook.add(support_outer, text="Поддержка")
         notebook.add(updates_outer, text="Обновления")
 
         self._build_main_tab(main_tab)
         self._build_account_tab(account_tab)
         self._build_recognition_tab(recognition_tab)
+        self._build_vision_tab(vision_tab)
         self._build_support_tab(support_tab)
         self._build_updates_tab(updates_tab)
 
@@ -464,6 +482,55 @@ class SettingsWindow:
         profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_recognition_profile_ui())
         self._refresh_recognition_profile_ui()
 
+    def _build_vision_tab(self, parent: ttk.Frame) -> None:
+        panel = self._panel(parent)
+        ttk.Label(panel, text="Перевод текста с экрана", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        )
+        ttk.Checkbutton(
+            panel,
+            text="Включить перевод выделенной области экрана",
+            variable=self.vision_enabled_var,
+        ).grid(row=1, column=1, sticky="w", pady=(0, 10))
+        self._field(panel, 2, "Горячая клавиша", ttk.Entry(panel, textvariable=self.vision_hotkey_var, width=24))
+        self._field(
+            panel,
+            3,
+            "Визуальная модель",
+            ttk.Combobox(
+                panel,
+                textvariable=self.vision_model_var,
+                values=list(VISION_MODEL_OPTIONS),
+                state="readonly",
+                width=42,
+            ),
+        )
+        self._field(
+            panel,
+            4,
+            "Качество изображения",
+            ttk.Combobox(
+                panel,
+                textvariable=self.vision_detail_var,
+                values=list(VISION_DETAIL_OPTIONS),
+                state="readonly",
+                width=42,
+            ),
+        )
+        tk.Label(
+            panel,
+            text=(
+                "Нажмите F9, выделите рамкой текст на экране и дождитесь перевода. "
+                "В OpenAI отправляется только выделенная область; снимки и распознанный текст не сохраняются. "
+                "GPT-5 Nano — быстрый экономичный режим по умолчанию. GPT-5.6 Luna можно выбрать для сложного фона и мелкого текста."
+            ),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            wraplength=590,
+        ).grid(row=5, column=1, sticky="w", pady=(12, 0))
+        panel.columnconfigure(1, weight=1)
+
     def _build_support_tab(self, parent: ttk.Frame) -> None:
         panel = self._panel(parent)
         ttk.Label(panel, text="Поддержка", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
@@ -577,9 +644,18 @@ class SettingsWindow:
         openai_model = self.openai_model_var.get().strip()
         openai_key = normalize_openai_api_key(self.openai_key_var.get())
         text_correction_model = self.text_correction_model_var.get().strip()
+        vision_hotkey = self.vision_hotkey_var.get().strip()
+        vision_model = VISION_MODEL_OPTIONS.get(self.vision_model_var.get(), "gpt-5-nano")
+        vision_detail = VISION_DETAIL_OPTIONS.get(self.vision_detail_var.get(), "high")
 
         if not hotkey:
             messagebox.showerror("Голос", "Укажите горячую клавишу.")
+            return
+        if self.vision_enabled_var.get() and not vision_hotkey:
+            messagebox.showerror("Голос", "Укажите горячую клавишу перевода экрана.")
+            return
+        if self.vision_enabled_var.get() and vision_hotkey.lower() == hotkey.lower():
+            messagebox.showerror("Голос", "Горячие клавиши голоса и перевода экрана должны отличаться.")
             return
         if not profile:
             messagebox.showerror("Голос", "Выберите профиль распознавания.")
@@ -593,7 +669,7 @@ class SettingsWindow:
         if self.text_correction_enabled_var.get() and not text_correction_model:
             messagebox.showerror("Голос", "Укажите модель исправления.")
             return
-        if (profile == "openai" or self.text_correction_enabled_var.get()) and not (openai_key or self._openai_key_exists()):
+        if (profile == "openai" or self.text_correction_enabled_var.get() or self.vision_enabled_var.get()) and not (openai_key or self._openai_key_exists()):
             messagebox.showerror("Голос", "Для OpenAI-режима вставьте API-ключ OpenAI на вкладке распознавания.")
             return
         if profile == "premium" and not self._premium_key_exists():
@@ -622,6 +698,12 @@ class SettingsWindow:
         raw.setdefault("startup", {})["run_on_windows_startup"] = bool(self.autostart_var.get())
         raw.setdefault("support", {})["server_url"] = self.support_server_url_var.get().strip() or DEFAULT_ACCOUNT_SERVER_URL
         raw.setdefault("support", {})["token_env"] = str((self.config.get("support") or {}).get("token_env") or "GOLOS_SUPPORT_TOKEN")
+        raw.setdefault("vision", {})["enabled"] = bool(self.vision_enabled_var.get())
+        raw.setdefault("vision", {})["hotkey"] = vision_hotkey
+        raw.setdefault("vision", {})["model"] = vision_model
+        raw.setdefault("vision", {})["detail"] = vision_detail
+        raw.setdefault("vision", {})["target_language"] = "ru"
+        raw.setdefault("vision", {})["max_image_dimension"] = 1600
 
         self.config_manager._write_yaml_mapping(raw)
         self.raw_config = raw
@@ -1063,6 +1145,20 @@ class SettingsWindow:
             if code == language:
                 return label
         return "Русский"
+
+    @staticmethod
+    def _vision_model_label(model: str) -> str:
+        for label, value in VISION_MODEL_OPTIONS.items():
+            if value == model:
+                return label
+        return "Рекомендуемый экономичный — GPT-5 Nano"
+
+    @staticmethod
+    def _vision_detail_label(detail: str) -> str:
+        for label, value in VISION_DETAIL_OPTIONS.items():
+            if value == detail:
+                return label
+        return "Высокая точность текста"
 
     def _ordered_profile_ids(self, profile_ids: list[str]) -> list[str]:
         ordered = [profile for profile in PROFILE_ORDER if profile in profile_ids]

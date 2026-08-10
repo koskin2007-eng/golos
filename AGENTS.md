@@ -37,6 +37,7 @@
 
 ```powershell
 .\.venv\Scripts\python.exe -m voice_input.app --list-profiles
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Сбор диагностики:

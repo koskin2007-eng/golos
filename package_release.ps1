@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipBuild
+)
+
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -12,7 +16,9 @@ $Version = (& $PythonPath -c "from voice_input.version import APP_VERSION; print
 $Tag = "v$Version"
 $Repository = "koskin2007-eng/golos"
 
-& (Join-Path $ProjectRoot "build_exe.ps1")
+if (-not $SkipBuild) {
+    & (Join-Path $ProjectRoot "build_exe.ps1")
+}
 
 $AppDir = Join-Path $ProjectRoot "dist\Golos"
 if (-not (Test-Path $AppDir)) {

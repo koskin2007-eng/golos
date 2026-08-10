@@ -107,6 +107,14 @@ performance:
 support:
   server_url: ""
   token_env: "GOLOS_SUPPORT_TOKEN"
+
+vision:
+  enabled: true
+  hotkey: "F9"
+  model: "gpt-5-nano"
+  detail: "high"
+  target_language: "ru"
+  max_image_dimension: 1600
 """
 
 
@@ -214,6 +222,14 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
         "server_url": "",
         "token_env": "GOLOS_SUPPORT_TOKEN",
     },
+    "vision": {
+        "enabled": True,
+        "hotkey": "F9",
+        "model": "gpt-5-nano",
+        "detail": "high",
+        "target_language": "ru",
+        "max_image_dimension": 1600,
+    },
 }
 
 
@@ -293,6 +309,16 @@ class SupportSettings:
 
 
 @dataclass(slots=True)
+class VisionSettings:
+    enabled: bool = True
+    hotkey: str = "F9"
+    model: str = "gpt-5-nano"
+    detail: str = "high"
+    target_language: str = "ru"
+    max_image_dimension: int = 1600
+
+
+@dataclass(slots=True)
 class AppConfig:
     hotkey: str
     language: str
@@ -312,6 +338,7 @@ class AppConfig:
     logs: LogSettings
     performance: PerformanceSettings
     support: SupportSettings
+    vision: VisionSettings
 
 
 def deep_merge(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -346,6 +373,13 @@ def apply_recognition_profile(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_config(data: dict[str, Any]) -> AppConfig:
+    vision = VisionSettings(**data["vision"])
+    if vision.detail not in {"low", "high"}:
+        raise ValueError("vision.detail must be 'low' or 'high'.")
+    if vision.max_image_dimension < 512:
+        raise ValueError("vision.max_image_dimension must be at least 512.")
+    if vision.target_language != "ru":
+        raise ValueError("Only vision.target_language='ru' is currently supported.")
     return AppConfig(
         hotkey=str(data["hotkey"]),
         language=str(data["language"]),
@@ -365,6 +399,7 @@ def build_config(data: dict[str, Any]) -> AppConfig:
         logs=LogSettings(**data["logs"]),
         performance=PerformanceSettings(**data["performance"]),
         support=SupportSettings(**data["support"]),
+        vision=vision,
     )
 
 

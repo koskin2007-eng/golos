@@ -46,6 +46,9 @@ from voice_input.updater import (
 )
 from voice_input.utils import clean_transcript
 from voice_input.version import APP_NAME, APP_VERSION
+from voice_input.vision.overlay import select_screen_region
+from voice_input.vision.result_window import show_translation_result
+from voice_input.vision.translator import OpenAIVisionTranslator
 
 
 RECORD_START_BEEP_HZ = 900
@@ -95,13 +98,16 @@ class VoiceInputApp:
         self.recorder = AudioRecorder(self.config.audio, logger=self.logger)
         self.paster = TextPaster(self.config.paste, logger=self.logger)
         self.hotkey: PushToTalkHotkey | None = None
+        self.vision_hotkey: PushToTalkHotkey | None = None
         self.tray: TrayController | None = None
         self._transcribers: dict[tuple[str, str, str, str], object] = {}
         self._text_corrector: OpenAITextCorrector | None = None
+        self._vision_translator: OpenAIVisionTranslator | None = None
         self._state_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._recording = False
         self._processing = False
+        self._vision_processing = False
         self._status = "запуск"
         self._no_tray = False
         self._restart_requested = False
@@ -140,8 +146,27 @@ class VoiceInputApp:
             logger=self.logger,
         )
 
+        if self.config.vision.enabled:
+            if self.config.vision.hotkey.strip().lower() == self.config.hotkey.strip().lower():
+                raise ValueError("Горячие клавиши голоса и перевода экрана должны отличаться.")
+            self.vision_hotkey = PushToTalkHotkey(
+                self.config.vision.hotkey,
+                on_pressed=self._on_vision_hotkey_pressed,
+                on_released=lambda: None,
+                logger=self.logger,
+            )
+
         self.set_status("готов")
         self.hotkey.start()
+        if self.vision_hotkey is not None:
+            self.vision_hotkey.start()
+            self.logger.info(
+                "Vision enabled hotkey=%s model=%s detail=%s max_dimension=%s",
+                self.config.vision.hotkey,
+                self.config.vision.model,
+                self.config.vision.detail,
+                self.config.vision.max_image_dimension,
+            )
         self._start_restart_request_watcher()
         self._start_update_install_request_watcher()
         self._start_remote_action_watcher()
@@ -164,6 +189,8 @@ class VoiceInputApp:
         self._stop_event.set()
         if self.hotkey is not None:
             self.hotkey.stop()
+        if self.vision_hotkey is not None:
+            self.vision_hotkey.stop()
         self.set_status("остановлено")
         self.logger.info("Application stopped")
 
@@ -392,7 +419,7 @@ class VoiceInputApp:
 
     def _on_hotkey_pressed(self) -> None:
         with self._state_lock:
-            if self._recording or self._processing:
+            if self._recording or self._processing or self._vision_processing:
                 return
             self._recording = True
 
@@ -451,6 +478,70 @@ class VoiceInputApp:
             name="transcribe-and-paste",
             daemon=True,
         ).start()
+
+    def _on_vision_hotkey_pressed(self) -> None:
+        with self._state_lock:
+            if self._recording or self._processing or self._vision_processing:
+                return
+            self._vision_processing = True
+
+        self.set_status("выбор области")
+        threading.Thread(target=self._run_vision_capture, name="vision-capture", daemon=True).start()
+
+    def _run_vision_capture(self) -> None:
+        try:
+            select_screen_region(self._process_vision_selection, self._cancel_vision_selection, self.logger)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Screen region selection failed")
+            self._finish_vision("ошибка")
+            self._show_vision_error(str(exc))
+
+    def _cancel_vision_selection(self) -> None:
+        self.logger.info("Vision selection cancelled")
+        self._finish_vision("готов")
+
+    def _process_vision_selection(self, image) -> None:  # noqa: ANN001
+        try:
+            self.set_status("перевод экрана")
+            width, height = image.size
+            self.logger.info("Vision selection captured width=%s height=%s", width, height)
+            if self._vision_translator is None:
+                self._vision_translator = OpenAIVisionTranslator(self.config.vision, self.logger)
+            result = self._vision_translator.translate(image)
+            self.logger.info(
+                "Vision translation completed model=%s elapsed_ms=%.0f source_len=%s translation_len=%s",
+                result.model,
+                result.elapsed_ms,
+                len(result.source_text),
+                len(result.translated_text),
+            )
+            if not result.source_text:
+                raise RuntimeError("В выделенной области не найден читаемый текст.")
+            self._finish_vision("перевод готов")
+            show_translation_result(result)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Vision translation failed")
+            self._show_vision_error(str(exc))
+        finally:
+            self._finish_vision("готов")
+
+    def _finish_vision(self, status: str) -> None:
+        with self._state_lock:
+            self._vision_processing = False
+        self.set_status(status)
+
+    def _show_vision_error(self, message: str) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            messagebox.showerror("Голос — перевод экрана", message, parent=root)
+            root.destroy()
+        except Exception:  # noqa: BLE001
+            self._notify("Голос — перевод экрана", message)
 
     def _process_recording(self, recording: RecordingResult, release_started: float) -> None:
         paste_ms = 0.0
