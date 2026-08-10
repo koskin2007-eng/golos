@@ -8,7 +8,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 
 from voice_input.config import VisionSettings
 
@@ -46,7 +46,7 @@ class OpenAIVisionTranslator:
 
     def translate(self, image: Image.Image) -> VisionTranslationResult:
         prepared = _prepare_image(image, self.settings.max_image_dimension)
-        encoded = _encode_jpeg(prepared)
+        encoded = _encode_image(prepared)
         started = time.perf_counter()
         response = self._get_client().responses.create(
             model=self.settings.model,
@@ -72,7 +72,7 @@ class OpenAIVisionTranslator:
                         {"type": "input_text", "text": "Распознай и переведи выделенную область на русский."},
                         {
                             "type": "input_image",
-                            "image_url": f"data:image/jpeg;base64,{encoded}",
+                            "image_url": f"data:image/png;base64,{encoded}",
                             "detail": self.settings.detail,
                         },
                     ],
@@ -96,6 +96,14 @@ def _prepare_image(image: Image.Image, max_dimension: int) -> Image.Image:
     limit = max(512, int(max_dimension))
     if max(prepared.size) > limit:
         prepared.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+    elif max(prepared.size) < min(1200, limit):
+        scale = min(1200, limit) / max(prepared.size)
+        prepared = prepared.resize(
+            (max(1, round(prepared.width * scale)), max(1, round(prepared.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+    prepared = ImageEnhance.Contrast(prepared).enhance(1.08)
+    prepared = prepared.filter(ImageFilter.UnsharpMask(radius=1.2, percent=135, threshold=2))
     return prepared
 
 
@@ -103,9 +111,9 @@ def _reasoning_effort(model: str) -> str:
     return "none" if model.startswith("gpt-5.6") else "minimal"
 
 
-def _encode_jpeg(image: Image.Image) -> str:
+def _encode_image(image: Image.Image) -> str:
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=88, optimize=True)
+    image.save(buffer, format="PNG", optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 

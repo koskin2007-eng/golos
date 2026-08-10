@@ -21,6 +21,11 @@ class VisionTranslatorTests(unittest.TestCase):
         prepared = _prepare_image(image, 1600)
         self.assertEqual(prepared.size, (1600, 800))
 
+    def test_small_text_image_is_upscaled_without_changing_aspect_ratio(self) -> None:
+        image = Image.new("RGB", (600, 300), "white")
+        prepared = _prepare_image(image, 1600)
+        self.assertEqual(prepared.size, (1200, 600))
+
     def test_json_result_is_parsed(self) -> None:
         result = _parse_result(
             '{"source_language":"English","source_text":"Hello","translated_text":"Привет"}'
