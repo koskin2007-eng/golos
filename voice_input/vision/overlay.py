@@ -23,34 +23,15 @@ def select_screen_region(
     left, top, width, height = _virtual_screen_geometry(screenshot)
 
     root = tk.Tk()
-    root.title("Голос — перевод экрана")
-    root.overrideredirect(True)
-    root.attributes("-topmost", True)
-    geometry = f"{width}x{height}{left:+d}{top:+d}"
-    root.geometry(geometry)
-    root.configure(cursor="crosshair")
-    root.attributes("-alpha", 0.28)
-
-    # Keep the real desktop visible through the overlay. Rendering one very wide
-    # ImageTk background can turn black on some multi-monitor Windows setups.
-    canvas = tk.Canvas(
-        root,
-        width=width,
-        height=height,
-        background="black",
-        highlightthickness=0,
-        cursor="crosshair",
-    )
-    canvas.pack(fill="both", expand=True)
-    canvas.create_text(
-        width // 2,
-        34,
-        text="Выделите текст для перевода • Esc — отмена",
-        fill="white",
-        font=("Segoe UI", 13, "bold"),
-    )
-
-    state: dict[str, object] = {"start": None, "rectangle": None, "finished": False}
+    root.withdraw()
+    state: dict[str, object] = {
+        "start": None,
+        "rectangle": None,
+        "canvas": None,
+        "monitor": None,
+        "finished": False,
+    }
+    windows: list[tuple[tk.Toplevel, tuple[int, int, int, int]]] = []
 
     def cancel(_event=None) -> None:  # noqa: ANN001
         if state["finished"]:
@@ -59,11 +40,14 @@ def select_screen_region(
         root.destroy()
         on_cancelled()
 
-    def press(event: tk.Event) -> None:
-        state["start"] = (event.x, event.y)
+    def press(event: tk.Event, canvas: tk.Canvas, monitor: tuple[int, int, int, int]) -> None:
+        previous_canvas = state.get("canvas")
         rectangle = state.get("rectangle")
-        if rectangle is not None:
-            canvas.delete(rectangle)
+        if rectangle is not None and isinstance(previous_canvas, tk.Canvas):
+            previous_canvas.delete(rectangle)
+        state["start"] = (event.x, event.y)
+        state["canvas"] = canvas
+        state["monitor"] = monitor
         state["rectangle"] = canvas.create_rectangle(
             event.x,
             event.y,
@@ -77,31 +61,105 @@ def select_screen_region(
     def drag(event: tk.Event) -> None:
         start = state.get("start")
         rectangle = state.get("rectangle")
-        if start is None or rectangle is None:
+        canvas = state.get("canvas")
+        if start is None or rectangle is None or not isinstance(canvas, tk.Canvas):
             return
         start_x, start_y = start
         canvas.coords(rectangle, start_x, start_y, event.x, event.y)
 
     def release(event: tk.Event) -> None:
         start = state.get("start")
-        if start is None or state["finished"]:
+        monitor = state.get("monitor")
+        if start is None or monitor is None or state["finished"]:
             return
+        monitor_left, monitor_top, monitor_width, monitor_height = monitor
         start_x, start_y = start
-        x1, x2 = sorted((max(0, start_x), min(width, event.x)))
-        y1, y2 = sorted((max(0, start_y), min(height, event.y)))
+        x1, x2 = sorted((max(0, min(monitor_width, start_x)), max(0, min(monitor_width, event.x))))
+        y1, y2 = sorted((max(0, min(monitor_height, start_y)), max(0, min(monitor_height, event.y))))
         if x2 - x1 < 12 or y2 - y1 < 12:
             return
         state["finished"] = True
-        crop = screenshot.crop((x1, y1, x2, y2)).copy()
+        crop = screenshot.crop(
+            (
+                monitor_left - left + x1,
+                monitor_top - top + y1,
+                monitor_left - left + x2,
+                monitor_top - top + y2,
+            )
+        ).copy()
         root.destroy()
         on_selected(crop)
 
-    root.bind("<Escape>", cancel)
-    canvas.bind("<ButtonPress-1>", press)
-    canvas.bind("<B1-Motion>", drag)
-    canvas.bind("<ButtonRelease-1>", release)
-    root.focus_force()
+    for monitor in _monitor_geometries((left, top, width, height)):
+        monitor_left, monitor_top, monitor_width, monitor_height = monitor
+        window = tk.Toplevel(root)
+        window.title("Голос — перевод экрана")
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.geometry(f"{monitor_width}x{monitor_height}{monitor_left:+d}{monitor_top:+d}")
+        window.configure(cursor="crosshair")
+        window.attributes("-alpha", 0.28)
+        canvas = tk.Canvas(
+            window,
+            width=monitor_width,
+            height=monitor_height,
+            background="black",
+            highlightthickness=0,
+            cursor="crosshair",
+        )
+        canvas.pack(fill="both", expand=True)
+        canvas.create_text(
+            monitor_width // 2,
+            34,
+            text="Выделите текст для перевода • Esc — отмена",
+            fill="white",
+            font=("Segoe UI", 13, "bold"),
+        )
+        window.bind("<Escape>", cancel)
+        canvas.bind("<ButtonPress-1>", lambda event, c=canvas, m=monitor: press(event, c, m))
+        canvas.bind("<B1-Motion>", drag)
+        canvas.bind("<ButtonRelease-1>", release)
+        windows.append((window, monitor))
+
+    root.update_idletasks()
+    pointer_x, pointer_y = root.winfo_pointerx(), root.winfo_pointery()
+    focus_window = next(
+        (
+            window
+            for window, (monitor_left, monitor_top, monitor_width, monitor_height) in windows
+            if monitor_left <= pointer_x < monitor_left + monitor_width
+            and monitor_top <= pointer_y < monitor_top + monitor_height
+        ),
+        windows[0][0],
+    )
+    focus_window.focus_force()
     root.mainloop()
+
+
+def _monitor_geometries(virtual: tuple[int, int, int, int]) -> list[tuple[int, int, int, int]]:
+    if not hasattr(ctypes, "windll"):
+        return [virtual]
+
+    class Rect(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    monitors: list[tuple[int, int, int, int]] = []
+    callback_type = ctypes.WINFUNCTYPE(
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(Rect),
+        ctypes.c_longlong,
+    )
+
+    @callback_type
+    def collect(_monitor, _dc, rect_pointer, _data) -> int:  # noqa: ANN001
+        rect = rect_pointer.contents
+        monitors.append((rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top))
+        return 1
+
+    ctypes.windll.user32.EnumDisplayMonitors(None, None, collect, 0)
+    return monitors or [virtual]
 
 
 def _virtual_screen_geometry(screenshot: Image.Image) -> tuple[int, int, int, int]:
