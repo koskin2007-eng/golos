@@ -26,12 +26,12 @@ def select_screen_region(
     root.withdraw()
     state: dict[str, object] = {
         "start": None,
-        "rectangle": None,
-        "canvas": None,
-        "monitor": None,
+        "anchor_monitor": None,
+        "rectangles": [],
         "finished": False,
     }
     windows: list[tuple[tk.Toplevel, tuple[int, int, int, int]]] = []
+    surfaces: list[tuple[tk.Canvas, tuple[int, int, int, int]]] = []
 
     def cancel(_event=None) -> None:  # noqa: ANN001
         if state["finished"]:
@@ -41,52 +41,65 @@ def select_screen_region(
         on_cancelled()
 
     def press(event: tk.Event, canvas: tk.Canvas, monitor: tuple[int, int, int, int]) -> None:
-        previous_canvas = state.get("canvas")
-        rectangle = state.get("rectangle")
-        if rectangle is not None and isinstance(previous_canvas, tk.Canvas):
+        for previous_canvas, rectangle in state.get("rectangles", []):
             previous_canvas.delete(rectangle)
-        state["start"] = (event.x, event.y)
-        state["canvas"] = canvas
-        state["monitor"] = monitor
-        state["rectangle"] = canvas.create_rectangle(
-            event.x,
-            event.y,
-            event.x,
-            event.y,
-            outline="#facc15",
-            width=3,
-            fill="",
-        )
+        monitor_left, monitor_top, _monitor_width, _monitor_height = monitor
+        state["start"] = (monitor_left + event.x, monitor_top + event.y)
+        state["anchor_monitor"] = monitor
+        state["rectangles"] = []
+        draw_selection(monitor_left + event.x, monitor_top + event.y)
+
+    def draw_selection(current_x: int, current_y: int) -> None:
+        start = state.get("start")
+        if start is None:
+            return
+        for previous_canvas, rectangle in state.get("rectangles", []):
+            previous_canvas.delete(rectangle)
+        start_x, start_y = start
+        global_x1, global_x2 = sorted((start_x, current_x))
+        global_y1, global_y2 = sorted((start_y, current_y))
+        rectangles: list[tuple[tk.Canvas, int]] = []
+        for surface, (monitor_left, monitor_top, monitor_width, monitor_height) in surfaces:
+            x1 = max(global_x1, monitor_left)
+            y1 = max(global_y1, monitor_top)
+            x2 = min(global_x2, monitor_left + monitor_width)
+            y2 = min(global_y2, monitor_top + monitor_height)
+            if x2 < x1 or y2 < y1:
+                continue
+            rectangle = surface.create_rectangle(
+                x1 - monitor_left,
+                y1 - monitor_top,
+                x2 - monitor_left,
+                y2 - monitor_top,
+                outline="#facc15",
+                width=3,
+                fill="",
+            )
+            rectangles.append((surface, rectangle))
+        state["rectangles"] = rectangles
 
     def drag(event: tk.Event) -> None:
-        start = state.get("start")
-        rectangle = state.get("rectangle")
-        canvas = state.get("canvas")
-        if start is None or rectangle is None or not isinstance(canvas, tk.Canvas):
+        monitor = state.get("anchor_monitor")
+        if monitor is None:
             return
-        start_x, start_y = start
-        canvas.coords(rectangle, start_x, start_y, event.x, event.y)
+        monitor_left, monitor_top, _monitor_width, _monitor_height = monitor
+        draw_selection(monitor_left + event.x, monitor_top + event.y)
 
     def release(event: tk.Event) -> None:
         start = state.get("start")
-        monitor = state.get("monitor")
+        monitor = state.get("anchor_monitor")
         if start is None or monitor is None or state["finished"]:
             return
-        monitor_left, monitor_top, monitor_width, monitor_height = monitor
+        monitor_left, monitor_top, _monitor_width, _monitor_height = monitor
         start_x, start_y = start
-        x1, x2 = sorted((max(0, min(monitor_width, start_x)), max(0, min(monitor_width, event.x))))
-        y1, y2 = sorted((max(0, min(monitor_height, start_y)), max(0, min(monitor_height, event.y))))
+        current_x = monitor_left + event.x
+        current_y = monitor_top + event.y
+        x1, x2 = sorted((max(left, min(left + width, start_x)), max(left, min(left + width, current_x))))
+        y1, y2 = sorted((max(top, min(top + height, start_y)), max(top, min(top + height, current_y))))
         if x2 - x1 < 12 or y2 - y1 < 12:
             return
         state["finished"] = True
-        crop = screenshot.crop(
-            (
-                monitor_left - left + x1,
-                monitor_top - top + y1,
-                monitor_left - left + x2,
-                monitor_top - top + y2,
-            )
-        ).copy()
+        crop = screenshot.crop((x1 - left, y1 - top, x2 - left, y2 - top)).copy()
         root.destroy()
         on_selected(crop)
 
@@ -120,8 +133,11 @@ def select_screen_region(
         canvas.bind("<B1-Motion>", drag)
         canvas.bind("<ButtonRelease-1>", release)
         windows.append((window, monitor))
+        surfaces.append((canvas, monitor))
 
     root.update_idletasks()
+    for window, monitor in windows:
+        _place_window_in_physical_pixels(window, monitor, log)
     pointer_x, pointer_y = root.winfo_pointerx(), root.winfo_pointery()
     focus_window = next(
         (
@@ -134,6 +150,52 @@ def select_screen_region(
     )
     focus_window.focus_force()
     root.mainloop()
+
+
+def _place_window_in_physical_pixels(
+    window: tk.Toplevel,
+    monitor: tuple[int, int, int, int],
+    logger: logging.Logger,
+) -> None:
+    if not hasattr(ctypes, "windll"):
+        return
+    left, top, width, height = monitor
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [ctypes.c_void_p]
+    user32.GetParent.restype = ctypes.c_void_p
+    user32.SetWindowPos.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
+    user32.SetWindowPos.restype = ctypes.c_int
+    user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    user32.GetWindowRect.restype = ctypes.c_int
+    tkinter_handle = int(window.winfo_id())
+    native_handle = int(user32.GetParent(tkinter_handle)) or tkinter_handle
+    hwnd_topmost = -1
+    swp_showwindow = 0x0040
+    if not user32.SetWindowPos(native_handle, hwnd_topmost, left, top, width, height, swp_showwindow):
+        logger.warning("Could not place vision overlay on monitor %s", monitor)
+        return
+
+    class Rect(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    actual = Rect()
+    if user32.GetWindowRect(native_handle, ctypes.byref(actual)):
+        logger.debug(
+            "Vision overlay requested=%s actual=(%d, %d, %d, %d)",
+            monitor,
+            actual.left,
+            actual.top,
+            actual.right - actual.left,
+            actual.bottom - actual.top,
+        )
 
 
 def _monitor_geometries(virtual: tuple[int, int, int, int]) -> list[tuple[int, int, int, int]]:
