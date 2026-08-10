@@ -5,7 +5,7 @@ import logging
 import tkinter as tk
 from collections.abc import Callable
 
-from PIL import Image, ImageEnhance, ImageGrab, ImageTk
+from PIL import Image, ImageGrab
 
 
 SelectionCallback = Callable[[Image.Image], None]
@@ -29,12 +29,19 @@ def select_screen_region(
     geometry = f"{width}x{height}{left:+d}{top:+d}"
     root.geometry(geometry)
     root.configure(cursor="crosshair")
+    root.attributes("-alpha", 0.28)
 
-    darkened = ImageEnhance.Brightness(screenshot.convert("RGB")).enhance(0.52)
-    photo = ImageTk.PhotoImage(darkened)
-    canvas = tk.Canvas(root, width=width, height=height, highlightthickness=0, cursor="crosshair")
+    # Keep the real desktop visible through the overlay. Rendering one very wide
+    # ImageTk background can turn black on some multi-monitor Windows setups.
+    canvas = tk.Canvas(
+        root,
+        width=width,
+        height=height,
+        background="black",
+        highlightthickness=0,
+        cursor="crosshair",
+    )
     canvas.pack(fill="both", expand=True)
-    canvas.create_image(0, 0, image=photo, anchor="nw")
     canvas.create_text(
         width // 2,
         34,
